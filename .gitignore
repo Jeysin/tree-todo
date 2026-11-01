@@ -30,3 +30,6 @@ Thumbs.db
 # 环境变量
 .env
 .env.*
+
+# WorkBuddy 工作区记忆（个人上下文，不入库）
+.workbuddy/

@@ -14,6 +14,13 @@
   - `03-feature-design.md` 功能全景与树形 / 平铺双视图设计
   - `04-ui-ux-design.md` 设计原则、布局、视觉与快捷键体系
   - `05-roadmap.md` 里程碑（M1–M4）与 v0.1.0 验收标准
+- **M1 实现（v0.1.0 开发中）**：
+  - Rust 数据层：SQLite Schema（`nodes` / `schema_version`）、迁移框架、启动备份（`.bak`）
+  - 状态传播引擎：创建（C1）、完成级联（M1/M2）、取消级联（M3）、删除（D1）、向上传播（含剪枝与 CC4 叶子化处理）；13 个单元测试覆盖规则表与 CC1–CC8，含 2041 节点级联冒烟
+  - IPC 命令（受影响快照返回约定）：`get_tree` / `create_node` / `update_content` / `toggle_status` / `delete_node` / `set_collapsed` / `expand_nodes`
+  - 树形（脑图）视图：d3-hierarchy 多根布局 + @xyflow/react 画布、折叠（+N 角标）、done 支线变灰、全键盘心流（N / Tab / Enter / Space / Delete / F2 / 方向键）、非模态删除确认、空态引导、明暗主题跟随系统
+  - 平铺视图：叶子节点按「待处理 / 已完成」分组、面包屑路径、点击跳转树形定位
+  - 状态栏：叶子统计与完成率、缩放控制
 
 ## [0.1.0] — 计划中
 

@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+/* 主题 token：明/暗跟随系统（docs/04-ui-ux-design.md §3.1） */
+:root {
+  --bg-base: #f7f8fa;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --text-primary: #1a1d23;
+  --text-muted: #6b7280;
+  --accent: #2f6fed;
+  --success: #16a34a;
+  --warning: #d97706;
+  --border-color: #e2e5ea;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-base: #16181d;
+    --bg-surface: #1f232b;
+    --bg-elevated: #262b35;
+    --text-primary: #e7eaf0;
+    --text-muted: #8b93a1;
+    --accent: #4f8cff;
+    --success: #3ecf8e;
+    --warning: #f5a623;
+    --border-color: #2e3440;
+  }
+}
+
+@theme inline {
+  --color-base: var(--bg-base);
+  --color-surface: var(--bg-surface);
+  --color-elevated: var(--bg-elevated);
+  --color-primary: var(--text-primary);
+  --color-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border-color);
+
+  --font-sans: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC",
+    sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* react-flow 画布底色与系统主题同步 */
+.react-flow {
+  --xy-background-color: var(--bg-base);
+  --xy-edge-stroke-default: var(--text-muted);
+}
+
+/* 平铺定位 / 新建节点的短暂高亮脉冲 */
+@keyframes node-flash {
+  0% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 65%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+.node-flash {
+  animation: node-flash 1.1s ease-out 2;
+}
+
+/* 滚动条（平铺视图） */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

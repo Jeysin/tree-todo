@@ -72,7 +72,7 @@
 
 ### 3.2 设计
 
-- 数据来源：Rust command `list_leaves()`，返回所有无子节点（叶子）的节点，附「层级路径面包屑」。
+- 数据来源：**前端基于内存快照计算**（全量树启动时经 `get_tree` 加载一次，叶子 = 无子节点的节点，面包屑沿 `parent_id` 向上收集）——避免每次切换视图重复拉取数据；数据本体永远以 Rust 层为准。
 - 分组：
   - **待处理**（默认展开）：pending 叶子，按树的深度优先顺序排列（同一任务线的叶子相邻）；
   - **已完成**（默认折叠，可展开）：done 叶子，按 `updated_at` 倒序。
@@ -112,6 +112,8 @@
 
 ## 6. IPC 数据流约定（决策 D6）
 
-- 每个**变更类** command 返回**受影响子树的最新快照**（操作节点 + 其祖先链 + 受影响的兄弟集合），前端 store 合并后受控刷新。
+- command 清单（v0.1）：`get_tree`、`create_node`、`update_content`、`toggle_status`、`delete_node`、`set_collapsed`、`expand_nodes`（批量展开，平铺视图跳转定位用）。
+- `create_node` 额外返回 `newId`（前端创建后立即选中并进入编辑态）。
+- 每个**变更类** command 返回**受影响子树的最新快照**（操作节点 + 级联子孙 + 被传播修改的祖先链），前端 store 合并后受控刷新。
 - **查询类** command（全量树 / 叶子列表）在启动与视图切换时调用；万级节点下全量树预计 ≤ 1MB JSON，首次加载后常驻内存，后续靠变更快照增量合并。
 - 所有 command 返回统一信封：`Ok(T)` / `Err(AppError)`；`AppError` 带 i18n 就绪的错误码（如 `CyclicMove`、`NodeNotFound`）。
