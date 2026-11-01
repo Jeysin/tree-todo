@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 
 import type { TodoNode } from '../../ipc/types';
+import { formatDoneTime } from '../../lib/time';
 import { useTodoStore } from '../../stores/todoStore';
 
 interface LeafRowData {
@@ -40,6 +41,11 @@ function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string)
           <div className="text-xs text-muted/70 truncate">{path.join(' / ')}</div>
         )}
       </div>
+      {done && (
+        <span className="shrink-0 text-xs text-muted/60 tabular-nums">
+          {formatDoneTime(leaf.updatedAt)}
+        </span>
+      )}
     </div>
   );
 }

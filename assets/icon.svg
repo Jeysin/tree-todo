@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B8DEF"/>
+      <stop offset="1" stop-color="#2F5FD6"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EDF2FB"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌底色：蓝渐变圆角方块 -->
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="230" fill="url(#sheen)"/>
+
+  <!-- 树形分支连线：根 → 两个子节点 -->
+  <path d="M400 512 C 520 512 520 320 640 320"
+        stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="30"
+        fill="none" stroke-linecap="round"/>
+  <path d="M400 512 C 520 512 520 704 640 704"
+        stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="30"
+        fill="none" stroke-linecap="round"/>
+
+  <!-- 根节点（待办卡片：空心圆 + 内容条） -->
+  <rect x="176" y="440" width="224" height="144" rx="36" fill="url(#card)"/>
+  <circle cx="234" cy="512" r="21" fill="none" stroke="#8FA3C8" stroke-width="10"/>
+  <rect x="272" y="500" width="98" height="24" rx="12" fill="#C4D2EE"/>
+
+  <!-- 上子节点（待处理） -->
+  <rect x="640" y="248" width="208" height="144" rx="36" fill="#FFFFFF" fill-opacity="0.94"/>
+  <circle cx="692" cy="320" r="19" fill="none" stroke="#8FA3C8" stroke-width="9"/>
+  <rect x="726" y="308" width="88" height="24" rx="12" fill="#C4D2EE"/>
+
+  <!-- 下子节点（已完成：对勾徽章） -->
+  <circle cx="744" cy="704" r="104" fill="#3ECF8E"/>
+  <path d="M700 704 l30 32 l58 -64"
+        stroke="#FFFFFF" stroke-width="26" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

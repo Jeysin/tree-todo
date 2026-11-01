@@ -63,6 +63,11 @@ body {
   --xy-edge-stroke-default: var(--text-muted);
 }
 
+/* 布局变化时节点平滑移动（docs/04 §1 克制动效：≤220ms，仅用于结构变化） */
+.react-flow__node {
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* 平铺定位 / 新建节点的短暂高亮脉冲 */
 @keyframes node-flash {
   0% {

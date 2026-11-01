@@ -1,5 +1,9 @@
 # tree-todo
 
+<p align="center">
+  <img src="assets/icon-1024.png" width="120" alt="tree-todo 图标" />
+</p>
+
 > 树形待办 —— 让待办像脑图一样生长
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

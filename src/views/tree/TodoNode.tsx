@@ -67,7 +67,7 @@ function TodoNodeView({ data }: NodeProps<TodoFlowNode>) {
       style={{ width: data.width, minHeight: 44 }}
       className={[
         'group relative flex items-center gap-2 px-2 py-1 rounded-lg border text-sm select-none',
-        'bg-surface border-border shadow-sm transition-[border-color,opacity] duration-150',
+        'bg-surface border-border shadow-sm transition-all duration-150 hover:shadow-md',
         done ? 'opacity-45' : '',
         isSelected ? 'border-accent ring-1 ring-accent' : 'hover:border-muted',
         isFlashing ? 'node-flash' : '',

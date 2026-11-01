@@ -48,9 +48,13 @@ export function StatusBar() {
   }, [nodes, childrenOf]);
 
   return (
-    <footer className="flex items-center justify-between h-8 px-3 border-t border-border bg-surface text-xs text-muted shrink-0">
-      <span className="select-none">
-        {stats.pending} 待处理 · {stats.done} 已完成 · 叶子完成率 {stats.rate}%
+    <footer className="flex items-center justify-between h-9 px-4 border-t border-border bg-surface text-xs text-muted shrink-0">
+      <span className="select-none flex items-center gap-1.5">
+        <b className="font-semibold text-primary tabular-nums">{stats.pending}</b> 待处理
+        <span className="text-border">·</span>
+        <b className="font-semibold text-primary tabular-nums">{stats.done}</b> 已完成
+        <span className="text-border">·</span>
+        叶子完成率 <b className="font-semibold text-primary tabular-nums">{stats.rate}%</b>
       </span>
       {viewMode === 'tree' && <ZoomControls />}
     </footer>

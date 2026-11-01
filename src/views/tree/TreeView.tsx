@@ -14,6 +14,7 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { useTodoStore } from '../../stores/todoStore';
+import { AppIcon } from '../../components/AppIcon';
 import { countDescendants, computeLayout, NODE_H } from './layout';
 import { TodoNode, type TodoFlowNode } from './TodoNode';
 
@@ -32,6 +33,7 @@ function EmptyHint() {
   return (
     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
       <div className="text-center pointer-events-auto">
+        <AppIcon size={84} className="mx-auto mb-7 drop-shadow-2xl rounded-[22px]" />
         <p className="text-lg font-medium text-primary mb-3">从这里开始你的第一条任务线</p>
         <p className="text-sm text-muted mb-6">
           按 <Kbd>N</Kbd> 创建根节点，<Kbd>Tab</Kbd> 拆解子任务，<Kbd>Space</Kbd> 完成它
