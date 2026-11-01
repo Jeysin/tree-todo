@@ -9,7 +9,7 @@ use chrono::Utc;
 use rusqlite::{params, Transaction};
 
 use crate::db::queries;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::model::{Node, NodeStatus};
 
 fn now() -> String {
@@ -81,7 +81,7 @@ pub fn delete_node(tx: &Transaction, id: &str) -> AppResult<(Vec<String>, Vec<No
 ///
 /// - 剪枝：祖先聚合结果与现值相同即停止（其上必然也已一致）；
 /// - 叶子化（CC4）：父节点子集合被删空时保持原状态，不参与聚合。
-fn propagate_upward(tx: &Transaction, start: Option<&str>) -> AppResult<Vec<Node>> {
+pub(crate) fn propagate_upward(tx: &Transaction, start: Option<&str>) -> AppResult<Vec<Node>> {
     let mut changed = Vec::new();
     let mut cur = start.map(str::to_string);
     while let Some(cid) = cur {
@@ -103,6 +103,73 @@ fn propagate_upward(tx: &Transaction, start: Option<&str>) -> AppResult<Vec<Node
         queries::update_status(tx, &cid, new_status, &ts)?;
         changed.push(queries::get_node(tx, &cid)?);
         cur = node.parent_id;
+    }
+    Ok(changed)
+}
+
+/// 移动节点（MV1）：改 parent/position，防环（CC8），新旧两路向上传播。
+///
+/// - `position` 为 None 时追加到新父末尾（分数定位法）；
+/// - 新父若处于折叠状态则自动展开（拖入的节点必须可见）；
+/// - 返回受影响快照（被移动节点 + 两路被修改的祖先 + 新父）。
+pub fn move_node(
+    tx: &Transaction,
+    id: &str,
+    new_parent: Option<&str>,
+    position: Option<f64>,
+) -> AppResult<Vec<Node>> {
+    let node = queries::get_node(tx, id)?;
+    if let Some(np) = new_parent {
+        if np == id {
+            return Err(AppError::CyclicMove);
+        }
+        // CC8：新父不能位于被移动节点的子树内
+        if queries::subtree_ids(tx, id)?.iter().any(|s| s == np) {
+            return Err(AppError::CyclicMove);
+        }
+        let _ = queries::get_node(tx, np)?; // 新父必须存在
+    }
+
+    let ts = now();
+    let pos = match position {
+        Some(p) => p,
+        None => queries::next_position(tx, new_parent)?,
+    };
+    queries::move_node(tx, id, new_parent, pos, &ts)?;
+
+    // 新父折叠则展开（拖入立即可见）
+    let mut affected = Vec::new();
+    if let Some(np) = new_parent {
+        queries::set_collapsed(tx, np, false, &ts)?;
+        affected.push(queries::get_node(tx, np)?);
+    }
+
+    affected.push(queries::get_node(tx, id)?);
+    affected.append(&mut propagate_upward(tx, node.parent_id.as_deref())?);
+    affected.append(&mut propagate_upward(tx, new_parent)?);
+    Ok(affected)
+}
+
+/// 导入后的状态校正（docs/02 §5）：后序遍历，非叶子状态以子节点聚合为准。
+/// 返回被修正的节点列表。
+pub fn recompute_subtree(tx: &Transaction, id: &str) -> AppResult<Vec<Node>> {
+    let mut changed = Vec::new();
+    for cid in queries::children_ids(tx, id)? {
+        changed.append(&mut recompute_subtree(tx, &cid)?);
+    }
+    let total = queries::child_count(tx, id)?;
+    if total > 0 {
+        let pending = queries::pending_child_count(tx, id)?;
+        let new_status = if pending == 0 {
+            NodeStatus::Done
+        } else {
+            NodeStatus::Pending
+        };
+        let node = queries::get_node(tx, id)?;
+        if node.status != new_status {
+            queries::update_status(tx, id, new_status, &now())?;
+            changed.push(queries::get_node(tx, id)?);
+        }
     }
     Ok(changed)
 }
@@ -398,5 +465,71 @@ mod tests {
         // in-memory + 机械盘机器，宽限阈值防抖动
         assert!(dur_complete.as_secs_f64() < 5.0, "级联完成耗时异常: {dur_complete:?}");
         assert!(dur_uncomplete.as_secs_f64() < 1.0, "向上传播耗时异常: {dur_uncomplete:?}");
+    }
+
+    fn move_op(db: &Db, id: &str, parent: Option<&str>, position: Option<f64>) -> AppResult<Vec<Node>> {
+        let tx = db.conn.unchecked_transaction().unwrap();
+        let r = super::move_node(&tx, id, parent, position);
+        if r.is_ok() {
+            tx.commit().unwrap();
+        }
+        r
+    }
+
+    /// MV1：跨树移动后新旧两路传播正确；新父自动展开。
+    #[test]
+    fn t14_move_between_trees_propagates_both_paths() {
+        let db = db();
+        // 树 A：A→B（B done → A done）；树 C：C→D pending
+        let a = create(&db, None, "A");
+        let b = create(&db, Some(&a), "B");
+        let c = create(&db, None, "C");
+        let d = create(&db, Some(&c), "D");
+        complete(&db, &b);
+        assert_eq!(status(&db, &a), NodeStatus::Done);
+        assert_eq!(status(&db, &c), NodeStatus::Pending);
+        // C 折叠，验证移动后自动展开
+        let tx = db.conn.unchecked_transaction().unwrap();
+        queries::set_collapsed(&tx, &c, true, "now").unwrap();
+        tx.commit().unwrap();
+
+        // 把 B 从 A 移到 C 下
+        move_op(&db, &b, Some(&c), None).unwrap();
+        assert_eq!(
+            queries::get_node(&db.conn, &b).unwrap().parent_id.as_deref(),
+            Some(c.as_str())
+        );
+        assert_eq!(status(&db, &a), NodeStatus::Done, "A 叶子化保持原状态（CC4）");
+        assert_eq!(status(&db, &c), NodeStatus::Pending, "C 有 pending 子 D 仍为 pending");
+        assert!(!queries::get_node(&db.conn, &c).unwrap().collapsed, "新父应自动展开");
+
+        // 再把 D 完成：C 的子为 B(done) + D(done) → C 自动 done
+        complete(&db, &d);
+        assert_eq!(status(&db, &c), NodeStatus::Done);
+    }
+
+    /// CC8：移动到自身子树内被拒绝。
+    #[test]
+    fn t15_move_cycle_rejected() {
+        let db = db();
+        let ids = chain(&db, None, &["A", "B", "C"]); // A→B→C
+        let err = move_op(&db, &ids[0], Some(&ids[2]), None);
+        assert!(matches!(err, Err(AppError::CyclicMove)), "应返回 CyclicMove: {err:?}");
+        // 移动到自身也被拒绝
+        let err2 = move_op(&db, &ids[1], Some(&ids[1]), None);
+        assert!(matches!(err2, Err(AppError::CyclicMove)));
+    }
+
+    /// 移动到根 + 精确 position（分数定位）。
+    #[test]
+    fn t16_move_to_root_with_position() {
+        let db = db();
+        let a = create(&db, None, "A");
+        let b = create(&db, Some(&a), "B");
+        move_op(&db, &b, None, Some(5000.0)).unwrap();
+        let n = queries::get_node(&db.conn, &b).unwrap();
+        assert!(n.parent_id.is_none(), "B 应成为根节点");
+        assert!((n.position - 5000.0).abs() < f64::EPSILON);
+        assert_eq!(status(&db, &a), NodeStatus::Pending);
     }
 }

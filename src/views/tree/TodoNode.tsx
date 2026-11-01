@@ -28,6 +28,7 @@ function TodoNodeView({ data }: NodeProps<TodoFlowNode>) {
   const isEditing = useTodoStore(s => s.editingId === nodeId);
   const isSelected = useTodoStore(s => s.selectedId === nodeId);
   const isFlashing = useTodoStore(s => s.flashId === nodeId);
+  const dropMode = useTodoStore(s => (s.dropTargetId === nodeId ? s.dropMode : null));
   const draft = useTodoStore(s => s.draft);
 
   const select = useTodoStore(s => s.select);
@@ -67,12 +68,17 @@ function TodoNodeView({ data }: NodeProps<TodoFlowNode>) {
       style={{ width: data.width, minHeight: 44 }}
       className={[
         'group relative flex items-center gap-2 px-2 py-1 rounded-lg border text-sm select-none',
-        'bg-surface border-border shadow-sm transition-all duration-150 hover:shadow-md',
+        'bg-surface border-border shadow-sm transition-all duration-150 hover:shadow-md cursor-grab active:cursor-grabbing',
         done ? 'opacity-45' : '',
         isSelected ? 'border-accent ring-1 ring-accent' : 'hover:border-muted',
+        dropMode === 'child' ? 'ring-2 ring-accent border-accent bg-accent/8' : '',
         isFlashing ? 'node-flash' : '',
       ].join(' ')}
     >
+      {/* 拖拽「插入为兄弟」位置指示线 */}
+      {dropMode === 'sibling' && (
+        <span className="absolute -bottom-2 left-0 right-0 h-0.5 rounded-full bg-accent" />
+      )}
       {/* 锚点（隐藏，仅供连线定位） */}
       <Handle type="target" position={Position.Left} isConnectable={false} className="!invisible" />
       <Handle type="source" position={Position.Right} isConnectable={false} className="!invisible" />

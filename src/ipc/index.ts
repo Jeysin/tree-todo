@@ -30,4 +30,25 @@ export const ipc = {
 
   /** 批量展开（平铺视图跳转定位用）。 */
   expandNodes: (ids: string[]): Promise<Affected> => invoke('expand_nodes', { ids }),
+
+  /** 编辑备注（E1：不触发状态变化）。 */
+  updateNote: (id: string, note: string): Promise<Affected> =>
+    invoke('update_note', { id, note }),
+
+  /** 移动节点（MV1）：position 为 null 时追加到新父末尾；防环由 Rust 校验。 */
+  moveNode: (id: string, newParentId: string | null, position: number | null): Promise<Affected> =>
+    invoke('move_node', { id, newParentId, position }),
+
+  /** 折叠/展开全部（视图操作，不入撤销历史）。 */
+  collapseAll: (collapsed: boolean): Promise<Affected> => invoke('collapse_all', { collapsed }),
+
+  /** 撤销 / 重做（无历史时返回 null）。 */
+  undo: (): Promise<Affected | null> => invoke('undo'),
+  redo: (): Promise<Affected | null> => invoke('redo'),
+
+  /** 导出全量数据到指定路径。 */
+  exportJson: (path: string): Promise<void> => invoke('export_json', { path }),
+
+  /** 从指定路径导入（追加 + id 重映射 + 状态校正）。 */
+  importJson: (path: string): Promise<Affected> => invoke('import_json', { path }),
 };

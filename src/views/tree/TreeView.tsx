@@ -1,22 +1,27 @@
 /**
  * 树形（脑图）视图：react-flow 画布 + 全键盘操作流（docs/03 §2、§4；docs/04 §5）。
- * 职责：渲染布局结果、维护焦点移动、视口跟随、删除确认与空态引导。
+ * v0.2：拖拽移动（成为子节点 / 插入为其后兄弟）、Alt+↑↓ 同级排序、Ctrl+F 搜索、
+ * 备注详情面板、静默删除（toast 撤销）。
  */
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
   ReactFlow,
+  applyNodeChanges,
   useReactFlow,
   type Edge,
+  type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import { useTodoStore } from '../../stores/todoStore';
 import { AppIcon } from '../../components/AppIcon';
-import { countDescendants, computeLayout, NODE_H } from './layout';
-import { TodoNode, type TodoFlowNode } from './TodoNode';
+import { useTodoStore } from '../../stores/todoStore';
+import { DetailPanel } from './DetailPanel';
+import { computeLayout, NODE_H } from './layout';
+import { SearchBar } from './SearchBar';
+import { TodoNode, type TodoFlowNode, type TodoNodeData } from './TodoNode';
 
 const nodeTypes: NodeTypes = { todo: TodoNode };
 
@@ -40,7 +45,7 @@ function EmptyHint() {
         </p>
         <button
           onClick={() => void createChild(null)}
-          className="px-4 h-9 rounded-lg bg-accent text-white text-sm hover:opacity-90 transition-opacity"
+          className="px-4 h-9 rounded-lg bg-accent text-white text-sm shadow-sm hover:brightness-110 active:scale-[0.98] transition-all"
         >
           + 创建第一个任务
         </button>
@@ -49,38 +54,25 @@ function EmptyHint() {
   );
 }
 
-/** 删除确认条（docs/04 §4.4：非模态内联确认）。 */
-function ConfirmBar() {
-  const id = useTodoStore(s => s.confirmDeleteId);
-  const node = useTodoStore(s => (id ? s.nodes[id] : null));
-  const childrenOf = useTodoStore(s => s.childrenOf);
-  const remove = useTodoStore(s => s.remove);
-  const setConfirmDelete = useTodoStore(s => s.setConfirmDelete);
-
-  if (!id || !node) return null;
-  const desc = countDescendants(id, childrenOf);
-  return (
-    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 rounded-lg bg-elevated border border-border shadow-xl text-sm whitespace-nowrap">
-      <span className="text-primary">
-        删除「{node.content || '未命名'}」
-        {desc > 0 && <span className="text-warning">及其 {desc} 个子节点</span>}？
-      </span>
-      <span className="flex gap-2">
-        <button
-          onClick={() => void remove(id)}
-          className="px-2.5 py-1 rounded bg-red-500/90 text-white hover:bg-red-500 transition-colors"
-        >
-          删除
-        </button>
-        <button
-          onClick={() => setConfirmDelete(null)}
-          className="px-2.5 py-1 rounded border border-border text-primary hover:bg-base transition-colors"
-        >
-          取消
-        </button>
-      </span>
-    </div>
-  );
+/** 由布局结果构建 react-flow 节点（位置来自布局，拖拽期间由 onNodesChange 临时覆盖）。 */
+function buildNodes(
+  layout: ReturnType<typeof computeLayout>,
+  childrenOf: Record<string, string[]>,
+): TodoFlowNode[] {
+  return layout.nodes.map(p => ({
+    id: p.id,
+    type: 'todo' as const,
+    position: { x: p.x, y: p.y },
+    data: {
+      nodeId: p.id,
+      width: p.width,
+      hiddenCount: (childrenOf[p.id] ?? []).length,
+      childCount: (childrenOf[p.id] ?? []).length,
+    },
+    draggable: true,
+    selectable: false,
+    deletable: false,
+  }));
 }
 
 export function TreeView() {
@@ -93,30 +85,19 @@ export function TreeView() {
   const viewMode = useTodoStore(s => s.viewMode);
   const revealTarget = useTodoStore(s => s.revealTarget);
   const centerTarget = useTodoStore(s => s.centerTarget);
+  const searchOpen = useTodoStore(s => s.searchOpen);
+  const setSearchOpen = useTodoStore(s => s.setSearchOpen);
 
   const layout = useMemo(
     () => computeLayout(nodes, roots, childrenOf),
     [nodes, roots, childrenOf],
   );
 
-  const rfNodes = useMemo<TodoFlowNode[]>(
-    () =>
-      layout.nodes.map(p => ({
-        id: p.id,
-        type: 'todo' as const,
-        position: { x: p.x, y: p.y },
-        data: {
-          nodeId: p.id,
-          width: p.width,
-          hiddenCount: (childrenOf[p.id] ?? []).length,
-          childCount: (childrenOf[p.id] ?? []).length,
-        },
-        draggable: false,
-        selectable: false,
-        deletable: false,
-      })),
-    [layout, childrenOf],
-  );
+  // 节点位置状态：布局变化时重建；拖拽中由 applyNodeChanges 维护临时位置
+  const [rfNodes, setRfNodes] = useState<TodoFlowNode[]>([]);
+  useEffect(() => {
+    setRfNodes(buildNodes(layout, childrenOf));
+  }, [layout, childrenOf]);
 
   const rfEdges = useMemo<Edge[]>(
     () =>
@@ -134,6 +115,10 @@ export function TreeView() {
   );
 
   const posById = useMemo(() => new Map(layout.nodes.map(p => [p.id, p])), [layout]);
+
+  const onNodesChange = useCallback((changes: NodeChange<TodoFlowNode>[]) => {
+    setRfNodes(nds => applyNodeChanges(changes, nds));
+  }, []);
 
   /** 视口居中到节点（保持给定缩放）。 */
   const centerOn = useCallback(
@@ -174,7 +159,87 @@ export function TreeView() {
     }
   }, [centerTarget, posById, centerOn, getZoom]);
 
-  // 全键盘操作流（docs/03 §4）
+  // ── 拖拽移动（v0.2）────────────────────────────────
+  /** 节点自身或其子孙不可作为拖拽目标（防环的 UI 侧过滤，Rust 侧仍二次校验）。 */
+  const isSelfOrDescendant = useCallback(
+    (candidate: string, draggedId: string) => {
+      let cur: string | null = draggedId;
+      while (cur) {
+        if (cur === candidate) return true;
+        cur = useTodoStore.getState().nodes[cur]?.parentId ?? null;
+      }
+      return false;
+    },
+    [],
+  );
+
+  const onNodeDrag = useCallback(
+    (_: MouseEvent | TouchEvent, dragged: TodoFlowNode) => {
+      const width = (dragged.data as TodoNodeData).width ?? 120;
+      const cx = dragged.position.x + width / 2;
+      const cy = dragged.position.y + NODE_H / 2;
+      let targetId: string | null = null;
+      let mode: 'child' | 'sibling' | null = null;
+      for (const p of layout.nodes) {
+        if (isSelfOrDescendant(p.id, dragged.id)) continue;
+        // 卡片范围内 → 成为其子节点
+        if (cx >= p.x - 8 && cx <= p.x + p.width + 8 && cy >= p.y && cy <= p.y + NODE_H) {
+          targetId = p.id;
+          mode = 'child';
+          break;
+        }
+        // 卡片正下方窄带 → 插为其后兄弟
+        if (cx >= p.x && cx <= p.x + p.width && cy > p.y + NODE_H && cy <= p.y + NODE_H + 24) {
+          targetId = p.id;
+          mode = 'sibling';
+          break;
+        }
+      }
+      useTodoStore.getState().setDropTarget(targetId, mode);
+    },
+    [layout, isSelfOrDescendant],
+  );
+
+  const onNodeDragStop = useCallback(
+    (_: MouseEvent | TouchEvent, dragged: TodoFlowNode) => {
+      const st = useTodoStore.getState();
+      const targetId = st.dropTargetId;
+      const mode = st.dropMode;
+      st.setDropTarget(null, null);
+
+      if (!targetId) {
+        // 拖到空白：非根节点移到根末尾；根节点保持原位
+        const cur = st.nodes[dragged.id];
+        if (cur && cur.parentId !== null) {
+          void st.moveNode(dragged.id, null);
+        }
+        setRfNodes(buildNodes(layout, childrenOf));
+        return;
+      }
+
+      if (mode === 'child') {
+        void st.moveNode(dragged.id, targetId, null);
+      } else {
+        // 兄弟：插入到目标之后（分数定位取中点）
+        const t = st.nodes[targetId];
+        if (t) {
+          const siblings = t.parentId === null ? st.roots : (st.childrenOf[t.parentId] ?? []);
+          const idx = siblings.indexOf(t.id);
+          const nextNode =
+            idx >= 0 && idx + 1 < siblings.length ? st.nodes[siblings[idx + 1]] : null;
+          const pos = nextNode ? (t.position + nextNode.position) / 2 : t.position + 1024;
+          void st.moveNode(dragged.id, t.parentId, pos);
+        } else {
+          void st.moveNode(dragged.id, targetId, null);
+        }
+      }
+      // 复位视觉位置（成功时布局随后会再次重建）
+      setRfNodes(buildNodes(layout, childrenOf));
+    },
+    [layout, childrenOf],
+  );
+
+  // ── 全键盘操作流（docs/03 §4；v0.2 增补搜索 / Alt 排序 / 静默删除）──
   useEffect(() => {
     if (viewMode !== 'tree') return;
     const onKey = (e: KeyboardEvent) => {
@@ -183,8 +248,38 @@ export function TreeView() {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (st.editingId) return;
 
+      const mod = e.ctrlKey || e.metaKey;
+
+      // Ctrl+F 搜索
+      if (mod && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        st.setSearchOpen(true);
+        return;
+      }
+
       const id = st.selectedId;
       const node = id ? st.nodes[id] : undefined;
+
+      // Alt+↑ / Alt+↓ 同级排序
+      if (e.altKey && id && node && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        const siblings =
+          node.parentId === null ? st.roots : (st.childrenOf[node.parentId] ?? []);
+        const idx = siblings.indexOf(id);
+        if (e.key === 'ArrowUp' && idx > 0) {
+          const prev = st.nodes[siblings[idx - 1]];
+          const prevPrev = idx >= 2 ? st.nodes[siblings[idx - 2]] : null;
+          const pos = prevPrev ? (prevPrev.position + prev.position) / 2 : prev.position - 1024;
+          void st.moveNode(id, node.parentId, pos);
+        } else if (e.key === 'ArrowDown' && idx >= 0 && idx < siblings.length - 1) {
+          const next = st.nodes[siblings[idx + 1]];
+          const nextNext = idx + 2 < siblings.length ? st.nodes[siblings[idx + 2]] : null;
+          const pos = nextNext ? (next.position + nextNext.position) / 2 : next.position + 1024;
+          void st.moveNode(id, node.parentId, pos);
+        }
+        return;
+      }
+
       switch (e.key) {
         case 'n':
         case 'N':
@@ -212,14 +307,13 @@ export function TreeView() {
         case 'Delete':
           if (id) {
             e.preventDefault();
-            st.setConfirmDelete(id);
+            void st.remove(id);
           }
           break;
         case 'Backspace':
-          // 内容为空的节点才允许 Backspace 触发删除（避免误删）
           if (id && st.nodes[id]?.content === '') {
             e.preventDefault();
-            st.setConfirmDelete(id);
+            void st.remove(id);
           }
           break;
         case 'F2':
@@ -229,7 +323,7 @@ export function TreeView() {
           }
           break;
         case 'Escape':
-          st.setConfirmDelete(null);
+          st.setSearchOpen(false);
           break;
         case 'ArrowUp':
         case 'ArrowDown': {
@@ -269,7 +363,6 @@ export function TreeView() {
           }
           break;
         case '1':
-          // Shift+1 适应整树视图
           if (e.shiftKey) {
             e.preventDefault();
             void fitView({ padding: 0.15, duration: 400 });
@@ -287,9 +380,11 @@ export function TreeView() {
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
         onNodeClick={(_, n) => useTodoStore.getState().select(n.id)}
         onPaneClick={() => useTodoStore.getState().select(null)}
-        nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
         zoomOnDoubleClick={false}
@@ -305,7 +400,8 @@ export function TreeView() {
         />
       </ReactFlow>
       {loaded && roots.length === 0 && <EmptyHint />}
-      <ConfirmBar />
+      <SearchBar open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <DetailPanel />
     </div>
   );
 }

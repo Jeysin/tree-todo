@@ -15,6 +15,10 @@ pub enum AppError {
     /// v0.2 拖拽移动时使用：不允许把节点移动到它自己的子树内（docs/02 CC8）。
     #[error("不允许把节点移动到它自己的子树内")]
     CyclicMove,
+
+    /// 导入文件格式错误（docs/02 §5）。
+    #[error("导入文件格式错误: {0}")]
+    ImportFormat(String),
 }
 
 impl Serialize for AppError {
@@ -27,6 +31,7 @@ impl Serialize for AppError {
             AppError::Io(_) => "Io",
             AppError::NodeNotFound(_) => "NodeNotFound",
             AppError::CyclicMove => "CyclicMove",
+            AppError::ImportFormat(_) => "ImportFormat",
         };
         let mut s = serializer.serialize_struct("AppError", 2)?;
         s.serialize_field("code", code)?;

@@ -1,11 +1,13 @@
 /**
  * 全局 store（docs/01 §4 职责边界：前端只持渲染快照，每次变更后以 Rust 返回结果为准）。
  * applyAffected 是唯一的数据合并入口 —— upserted 覆盖、removed 移除，然后重建索引。
+ * v0.2：撤销/重做、拖拽移动、备注、导入导出、toast（静默删除 + 撤销）。
  */
 import { create } from 'zustand';
+import { open, save } from '@tauri-apps/plugin-dialog';
 
 import { ipc } from '../ipc';
-import type { Affected, TodoNode } from '../ipc/types';
+import type { Affected, AppError, TodoNode } from '../ipc/types';
 
 export type ViewMode = 'tree' | 'flat';
 
@@ -13,6 +15,13 @@ export type ViewMode = 'tree' | 'flat';
 export interface RevealTarget {
   id: string;
   ts: number;
+}
+
+/** 底部 toast（删除后撤销等场景）。 */
+export interface Toast {
+  id: number;
+  message: string;
+  undoable: boolean;
 }
 
 interface TodoState {
@@ -29,11 +38,17 @@ interface TodoState {
   selectedId: string | null;
   editingId: string | null;
   draft: string;
-  confirmDeleteId: string | null;
   flashId: string | null;
   revealTarget: RevealTarget | null;
   /** 新建节点后的视口居中请求（保持当前缩放）。 */
   centerTarget: RevealTarget | null;
+  /** 拖拽悬停的目标节点（高亮用）。 */
+  dropTargetId: string | null;
+  /** 拖拽语义：child = 成为目标子节点；sibling = 插到目标之后。 */
+  dropMode: 'child' | 'sibling' | null;
+  toast: Toast | null;
+  /** 搜索浮层开关（TopBar 搜索按钮 / Ctrl+F 触发）。 */
+  searchOpen: boolean;
 
   // ── actions ──
   loadTree: () => Promise<void>;
@@ -42,14 +57,24 @@ interface TodoState {
   createSibling: (id: string) => Promise<void>;
   toggle: (id: string) => Promise<void>;
   updateContent: (id: string, content: string) => Promise<void>;
+  updateNote: (id: string, note: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
+  moveNode: (id: string, newParentId: string | null, position?: number | null) => Promise<void>;
   setCollapsed: (id: string, collapsed: boolean) => Promise<void>;
+  collapseAll: (collapsed: boolean) => Promise<void>;
   revealNode: (id: string) => Promise<void>;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
+  exportData: () => Promise<void>;
+  importData: () => Promise<void>;
   select: (id: string | null) => void;
   setEditing: (id: string | null) => void;
   setDraft: (d: string) => void;
   setViewMode: (m: ViewMode) => void;
-  setConfirmDelete: (id: string | null) => void;
+  setDropTarget: (id: string | null, mode?: 'child' | 'sibling' | null) => void;
+  setSearchOpen: (open: boolean) => void;
+  showToast: (message: string, undoable?: boolean) => void;
+  clearToast: () => void;
 }
 
 /** 由 nodes 重建 roots / childrenOf 索引（每次变更后全量重建，万级节点 O(n log n) 依然轻松）。 */
@@ -70,7 +95,14 @@ function rebuildIndex(nodes: Record<string, TodoNode>) {
   return { roots, childrenOf };
 }
 
+function errMsg(e: unknown, fallback: string): string {
+  const ae = e as Partial<AppError> | undefined;
+  if (ae && typeof ae.message === 'string' && ae.message) return ae.message;
+  return fallback;
+}
+
 let flashTimer: ReturnType<typeof setTimeout> | null = null;
+let toastSeq = 0;
 
 export const useTodoStore = create<TodoState>((set, get) => ({
   nodes: {},
@@ -82,10 +114,13 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   selectedId: null,
   editingId: null,
   draft: '',
-  confirmDeleteId: null,
   flashId: null,
   revealTarget: null,
   centerTarget: null,
+  dropTargetId: null,
+  dropMode: null,
+  toast: null,
+  searchOpen: false,
 
   async loadTree() {
     const list = await ipc.getTree();
@@ -95,11 +130,19 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   },
 
   applyAffected(af) {
-    const { nodes } = get();
+    const { nodes, selectedId, editingId } = get();
     const next = { ...nodes };
     for (const n of af.upserted) next[n.id] = n;
     for (const id of af.removed) delete next[id];
-    set({ nodes: next, ...rebuildIndex(next) });
+    // 选中 / 编辑中的节点被移除时清理（如撤销导出的创建、删除后撤销等场景）
+    const selectedGone = selectedId !== null && !next[selectedId];
+    const editingGone = editingId !== null && !next[editingId];
+    set({
+      nodes: next,
+      ...rebuildIndex(next),
+      ...(selectedGone ? { selectedId: null } : {}),
+      ...(editingGone ? { editingId: null, draft: '' } : {}),
+    });
   },
 
   async createChild(parentId) {
@@ -110,18 +153,17 @@ export const useTodoStore = create<TodoState>((set, get) => ({
         selectedId: r.newId,
         editingId: r.newId,
         draft: '',
-        confirmDeleteId: null,
         centerTarget: { id: r.newId, ts: Date.now() },
       });
     } catch (e) {
       console.error('createChild failed:', e);
+      get().showToast(errMsg(e, '创建节点失败'));
     }
   },
 
   async createSibling(id) {
     const node = get().nodes[id];
     if (!node) return;
-    // 根节点上的 Enter = 新建根
     await get().createChild(node.parentId);
   },
 
@@ -130,6 +172,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       get().applyAffected(await ipc.toggleStatus(id));
     } catch (e) {
       console.error('toggle failed:', e);
+      get().showToast(errMsg(e, '状态切换失败'));
     }
   },
 
@@ -138,22 +181,45 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       get().applyAffected(await ipc.updateContent(id, content));
     } catch (e) {
       console.error('updateContent failed:', e);
+      get().showToast(errMsg(e, '保存失败'));
     }
-    // 仅当仍在本节点编辑时才退出编辑态（避免 createChild 的响应竞态清掉新节点的编辑态）
     if (get().editingId === id) set({ editingId: null });
   },
 
+  async updateNote(id, note) {
+    try {
+      get().applyAffected(await ipc.updateNote(id, note));
+    } catch (e) {
+      console.error('updateNote failed:', e);
+      get().showToast(errMsg(e, '备注保存失败'));
+    }
+  },
+
+  /** v0.2：静默删除 + toast 撤销（撤销走统一历史栈）。 */
   async remove(id) {
+    const node = get().nodes[id];
     try {
       const { selectedId, editingId } = get();
       get().applyAffected(await ipc.deleteNode(id));
       set({
-        confirmDeleteId: null,
         selectedId: selectedId === id ? null : selectedId,
         editingId: editingId === id ? null : editingId,
       });
+      get().showToast(node ? `已删除「${node.content || '未命名'}」` : '已删除', true);
     } catch (e) {
       console.error('remove failed:', e);
+      get().showToast(errMsg(e, '删除失败'));
+    }
+  },
+
+  async moveNode(id, newParentId, position = null) {
+    try {
+      const af = await ipc.moveNode(id, newParentId, position ?? null);
+      get().applyAffected(af);
+      set({ selectedId: id });
+    } catch (e) {
+      console.error('moveNode failed:', e);
+      get().showToast(errMsg(e, '移动失败'));
     }
   },
 
@@ -162,6 +228,14 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       get().applyAffected(await ipc.setCollapsed(id, collapsed));
     } catch (e) {
       console.error('setCollapsed failed:', e);
+    }
+  },
+
+  async collapseAll(collapsed) {
+    try {
+      get().applyAffected(await ipc.collapseAll(collapsed));
+    } catch (e) {
+      console.error('collapseAll failed:', e);
     }
   },
 
@@ -192,8 +266,71 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     flashTimer = setTimeout(() => set({ flashId: null }), 2400);
   },
 
+  async undo() {
+    try {
+      const patch = await ipc.undo();
+      if (patch) {
+        get().applyAffected(patch);
+        get().showToast('已撤销');
+      } else {
+        get().showToast('没有可撤销的操作');
+      }
+    } catch (e) {
+      console.error('undo failed:', e);
+      get().showToast(errMsg(e, '撤销失败'));
+    }
+  },
+
+  async redo() {
+    try {
+      const patch = await ipc.redo();
+      if (patch) {
+        get().applyAffected(patch);
+        get().showToast('已重做');
+      }
+    } catch (e) {
+      console.error('redo failed:', e);
+      get().showToast(errMsg(e, '重做失败'));
+    }
+  },
+
+  async exportData() {
+    try {
+      const d = new Date();
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      const path = await save({
+        title: '导出 tree-todo 数据',
+        defaultPath: `tree-todo-${stamp}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!path) return;
+      await ipc.exportJson(path);
+      get().showToast('数据已导出');
+    } catch (e) {
+      console.error('export failed:', e);
+      get().showToast(errMsg(e, '导出失败'));
+    }
+  },
+
+  async importData() {
+    try {
+      const path = await open({
+        title: '导入 tree-todo 数据（追加到当前数据）',
+        multiple: false,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!path || Array.isArray(path)) return;
+      const af = await ipc.importJson(path);
+      get().applyAffected(af);
+      get().showToast(`导入完成（${af.upserted.length} 个节点，可 Ctrl+Z 撤销）`);
+    } catch (e) {
+      console.error('import failed:', e);
+      get().showToast(errMsg(e, '导入失败'));
+    }
+  },
+
   select(id) {
-    set({ selectedId: id, confirmDeleteId: null });
+    set({ selectedId: id });
   },
   setEditing(id) {
     set({ editingId: id, draft: id ? get().nodes[id]?.content ?? '' : '' });
@@ -202,10 +339,23 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     set({ draft: d });
   },
   setViewMode(m) {
-    set({ viewMode: m, confirmDeleteId: null });
+    set({ viewMode: m });
   },
-  setConfirmDelete(id) {
-    set({ confirmDeleteId: id });
+  setDropTarget(id, mode = null) {
+    const cur = get();
+    if (cur.dropTargetId !== id || cur.dropMode !== mode) {
+      set({ dropTargetId: id, dropMode: mode });
+    }
+  },
+  setSearchOpen(open) {
+    set({ searchOpen: open });
+  },
+  showToast(message, undoable = false) {
+    toastSeq += 1;
+    set({ toast: { id: toastSeq, message, undoable } });
+  },
+  clearToast() {
+    set({ toast: null });
   },
 }));
 

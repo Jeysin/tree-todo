@@ -55,6 +55,7 @@ docs/           # 技术文档
 3. **前端只持有渲染快照**，每次变更后以 Rust 返回的最新数据为准，不维护第二份真相。
 4. **新建节点永远是 pending**（不变量 I4），无任何例外。
 5. 修改 schema 必须走迁移（`schema_version`），禁止改表不升版本。
+6. **撤销历史**（v0.2 起）：除视图类操作（`set_collapsed` / `expand_nodes` / `collapse_all`）外，所有变更必须经 `history::run_with_history` 记录（before 快照 + after 变更）——绕过记录会导致撤销破坏数据一致性。回放走 `history::apply_patch`，禁止在回放后再次传播。
 
 ## 代码规范
 

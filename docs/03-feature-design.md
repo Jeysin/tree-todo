@@ -112,8 +112,9 @@
 
 ## 6. IPC 数据流约定（决策 D6）
 
-- command 清单（v0.1）：`get_tree`、`create_node`、`update_content`、`toggle_status`、`delete_node`、`set_collapsed`、`expand_nodes`（批量展开，平铺视图跳转定位用）。
+- command 清单（v0.2）：`get_tree`、`create_node`、`update_content`、`update_note`、`toggle_status`、`delete_node`、`move_node`、`set_collapsed`、`expand_nodes`、`collapse_all`、`undo`、`redo`、`export_json`、`import_json`。
 - `create_node` 额外返回 `newId`（前端创建后立即选中并进入编辑态）。
 - 每个**变更类** command 返回**受影响子树的最新快照**（操作节点 + 级联子孙 + 被传播修改的祖先链），前端 store 合并后受控刷新。
+- **撤销约定（v0.2）**：除视图类命令（`set_collapsed` / `expand_nodes` / `collapse_all`）外，所有变更类命令必须记录历史（快照式 before/after，上限 100 步）；`undo` / `redo` 返回可直接合并的 patch（无历史时为 `null`）。
 - **查询类** command（全量树 / 叶子列表）在启动与视图切换时调用；万级节点下全量树预计 ≤ 1MB JSON，首次加载后常驻内存，后续靠变更快照增量合并。
 - 所有 command 返回统一信封：`Ok(T)` / `Err(AppError)`；`AppError` 带 i18n 就绪的错误码（如 `CyclicMove`、`NodeNotFound`）。

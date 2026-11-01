@@ -40,7 +40,7 @@ pub struct Node {
 }
 
 /// 变更类 command 的统一返回（docs/01 D6：受影响快照）。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Affected {
     pub upserted: Vec<Node>,
@@ -53,4 +53,73 @@ pub struct Affected {
 pub struct CreateResult {
     pub new_id: String,
     pub upserted: Vec<Node>,
+}
+
+/// 导入/导出文件的节点格式（docs/02 §5：JSON 字段为 snake_case）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportNode {
+    pub id: String,
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default = "default_status_pending")]
+    pub status: String,
+    #[serde(default = "default_position")]
+    pub position: f64,
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+fn default_status_pending() -> String {
+    "pending".to_string()
+}
+fn default_position() -> f64 {
+    1024.0
+}
+
+impl From<&Node> for ImportNode {
+    fn from(n: &Node) -> Self {
+        ImportNode {
+            id: n.id.clone(),
+            parent_id: n.parent_id.clone(),
+            content: n.content.clone(),
+            note: n.note.clone(),
+            status: n.status.as_str().to_string(),
+            position: n.position,
+            collapsed: n.collapsed,
+            created_at: n.created_at.clone(),
+            updated_at: n.updated_at.clone(),
+        }
+    }
+}
+
+impl ImportNode {
+    pub fn into_node(self) -> Node {
+        Node {
+            id: self.id,
+            parent_id: self.parent_id,
+            content: self.content,
+            note: self.note,
+            status: NodeStatus::parse(&self.status),
+            position: self.position,
+            collapsed: self.collapsed,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+/// 导出文档（docs/02 §5；导入时复用同一结构反序列化）。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExportDoc {
+    pub format: String,
+    pub version: u32,
+    pub exported_at: String,
+    pub nodes: Vec<ImportNode>,
 }

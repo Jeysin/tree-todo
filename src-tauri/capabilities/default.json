@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "主窗口能力：v0.1 仅使用核心 IPC（无任何插件权限）",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }
