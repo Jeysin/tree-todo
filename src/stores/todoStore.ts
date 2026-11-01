@@ -2,14 +2,16 @@
  * 全局 store（docs/01 §4 职责边界：前端只持渲染快照，每次变更后以 Rust 返回结果为准）。
  * applyAffected 是唯一的数据合并入口 —— upserted 覆盖、removed 移除，然后重建索引。
  * v0.2：撤销/重做、拖拽移动、备注、导入导出、toast（静默删除 + 撤销）。
+ * v0.3：多文档、回收站（软删除）、主题切换（系统/浅色/深色）。
  */
 import { create } from 'zustand';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { confirm, open, save } from '@tauri-apps/plugin-dialog';
 
 import { ipc } from '../ipc';
-import type { Affected, AppError, TodoNode } from '../ipc/types';
+import type { Affected, AppError, DocMeta, TodoNode, TrashItem } from '../ipc/types';
 
-export type ViewMode = 'tree' | 'flat';
+export type ViewMode = 'tree' | 'flat' | 'stats' | 'trash';
+export type Theme = 'system' | 'light' | 'dark';
 
 /** 平铺视图跳转定位请求（TreeView 消费后清除）。 */
 export interface RevealTarget {
@@ -24,6 +26,24 @@ export interface Toast {
   undoable: boolean;
 }
 
+const THEME_KEY = 'tree-todo.theme';
+
+function applyTheme(t: Theme) {
+  const root = document.documentElement;
+  if (t === 'system') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', t);
+}
+
+function initialTheme(): Theme {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (v === 'light' || v === 'dark') return v;
+  } catch {
+    /* localStorage 不可用时回退系统 */
+  }
+  return 'system';
+}
+
 interface TodoState {
   // ── 数据快照 ──
   nodes: Record<string, TodoNode>;
@@ -33,8 +53,16 @@ interface TodoState {
   childrenOf: Record<string, string[]>;
   loaded: boolean;
 
+  // ── 多文档（v0.3）──
+  documents: DocMeta[];
+  currentDocId: string | null;
+
+  // ── 回收站（v0.3）──
+  trash: TrashItem[];
+
   // ── 视图状态 ──
   viewMode: ViewMode;
+  theme: Theme;
   selectedId: string | null;
   editingId: string | null;
   draft: string;
@@ -67,10 +95,24 @@ interface TodoState {
   redo: () => Promise<void>;
   exportData: () => Promise<void>;
   importData: () => Promise<void>;
+  backupNow: () => Promise<void>;
+  // 文档
+  loadDocuments: () => Promise<void>;
+  switchDocument: (id: string) => Promise<void>;
+  createDocument: (name: string) => Promise<void>;
+  renameDocument: (id: string, name: string) => Promise<void>;
+  deleteDocument: (id: string) => Promise<void>;
+  // 回收站
+  loadTrash: () => Promise<void>;
+  restoreTrash: (id: string) => Promise<void>;
+  purgeTrash: (id: string) => Promise<void>;
+  emptyTrash: () => Promise<void>;
+  // 视图
   select: (id: string | null) => void;
   setEditing: (id: string | null) => void;
   setDraft: (d: string) => void;
   setViewMode: (m: ViewMode) => void;
+  setTheme: (t: Theme) => void;
   setDropTarget: (id: string | null, mode?: 'child' | 'sibling' | null) => void;
   setSearchOpen: (open: boolean) => void;
   showToast: (message: string, undoable?: boolean) => void;
@@ -110,7 +152,13 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   childrenOf: {},
   loaded: false,
 
+  documents: [],
+  currentDocId: null,
+
+  trash: [],
+
   viewMode: 'tree',
+  theme: initialTheme(),
   selectedId: null,
   editingId: null,
   draft: '',
@@ -134,7 +182,6 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     const next = { ...nodes };
     for (const n of af.upserted) next[n.id] = n;
     for (const id of af.removed) delete next[id];
-    // 选中 / 编辑中的节点被移除时清理（如撤销导出的创建、删除后撤销等场景）
     const selectedGone = selectedId !== null && !next[selectedId];
     const editingGone = editingId !== null && !next[editingId];
     set({
@@ -195,7 +242,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
   },
 
-  /** v0.2：静默删除 + toast 撤销（撤销走统一历史栈）。 */
+  /** 静默删除（软删除进入回收站）+ toast 撤销。 */
   async remove(id) {
     const node = get().nodes[id];
     try {
@@ -205,7 +252,8 @@ export const useTodoStore = create<TodoState>((set, get) => ({
         selectedId: selectedId === id ? null : selectedId,
         editingId: editingId === id ? null : editingId,
       });
-      get().showToast(node ? `已删除「${node.content || '未命名'}」` : '已删除', true);
+      get().showToast(node ? `已删除「${node.content || '未命名'}」（可在回收站找回）` : '已删除', true);
+      void get().loadTrash(); // 同步回收站徽标
     } catch (e) {
       console.error('remove failed:', e);
       get().showToast(errMsg(e, '删除失败'));
@@ -240,7 +288,6 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   },
 
   async revealNode(id) {
-    // 展开祖先链 → 切树形视图 → 请求视口定位
     const { nodes } = get();
     const needExpand: string[] = [];
     let cur = nodes[id]?.parentId ?? null;
@@ -315,7 +362,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   async importData() {
     try {
       const path = await open({
-        title: '导入 tree-todo 数据（追加到当前数据）',
+        title: '导入 tree-todo 数据（追加到当前文档）',
         multiple: false,
         filters: [{ name: 'JSON', extensions: ['json'] }],
       });
@@ -329,6 +376,138 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
   },
 
+  async backupNow() {
+    try {
+      await ipc.backupNow();
+      get().showToast('已备份当前文档（保留最近 3 份）');
+    } catch (e) {
+      console.error('backup failed:', e);
+      get().showToast(errMsg(e, '备份失败'));
+    }
+  },
+
+  // ── 多文档 ──
+  async loadDocuments() {
+    try {
+      const idx = await ipc.listDocuments();
+      set({
+        documents: idx.documents,
+        currentDocId: idx.lastOpened ?? idx.documents[0]?.id ?? null,
+      });
+    } catch (e) {
+      console.error('loadDocuments failed:', e);
+    }
+  },
+
+  async switchDocument(id) {
+    if (get().currentDocId === id) return;
+    try {
+      await ipc.switchDocument(id);
+      set({ currentDocId: id, selectedId: null, editingId: null, viewMode: 'tree', trash: [] });
+      await get().loadTree();
+      await get().loadDocuments();
+    } catch (e) {
+      console.error('switchDocument failed:', e);
+      get().showToast(errMsg(e, '切换文档失败'));
+    }
+  },
+
+  async createDocument(name) {
+    try {
+      const meta = await ipc.createDocument(name);
+      await get().loadDocuments();
+      await get().switchDocument(meta.id);
+    } catch (e) {
+      console.error('createDocument failed:', e);
+      get().showToast(errMsg(e, '新建文档失败'));
+    }
+  },
+
+  async renameDocument(id, name) {
+    try {
+      await ipc.renameDocument(id, name);
+      await get().loadDocuments();
+    } catch (e) {
+      console.error('renameDocument failed:', e);
+      get().showToast(errMsg(e, '重命名失败'));
+    }
+  },
+
+  async deleteDocument(id) {
+    try {
+      const doc = get().documents.find(d => d.id === id);
+      const ok = await confirm(`删除文档「${doc?.name ?? id}」？\n\n数据文件将被永久删除（含回收站内容），不影响其他文档。`, {
+        title: '删除文档',
+        kind: 'warning',
+        okLabel: '删除',
+        cancelLabel: '取消',
+      });
+      if (!ok) return;
+      const idx = await ipc.deleteDocument(id);
+      set({
+        documents: idx.documents,
+        currentDocId: idx.lastOpened ?? idx.documents[0]?.id ?? null,
+        selectedId: null,
+        editingId: null,
+      });
+      await get().loadTree();
+    } catch (e) {
+      console.error('deleteDocument failed:', e);
+      get().showToast(errMsg(e, '删除文档失败'));
+    }
+  },
+
+  // ── 回收站 ──
+  async loadTrash() {
+    try {
+      set({ trash: await ipc.listTrash() });
+    } catch (e) {
+      console.error('loadTrash failed:', e);
+    }
+  },
+
+  async restoreTrash(id) {
+    try {
+      const af = await ipc.restoreTrash(id);
+      get().applyAffected(af);
+      await get().loadTrash();
+      get().showToast('已恢复');
+    } catch (e) {
+      console.error('restoreTrash failed:', e);
+      get().showToast(errMsg(e, '恢复失败'));
+    }
+  },
+
+  async purgeTrash(id) {
+    try {
+      await ipc.purgeTrash(id);
+      await get().loadTrash();
+      get().showToast('已彻底删除');
+    } catch (e) {
+      console.error('purgeTrash failed:', e);
+      get().showToast(errMsg(e, '彻底删除失败'));
+    }
+  },
+
+  async emptyTrash() {
+    try {
+      const ok = await confirm('清空回收站？所有已删除的节点将被永久移除，不可恢复。', {
+        title: '清空回收站',
+        kind: 'warning',
+        okLabel: '清空',
+        cancelLabel: '取消',
+      });
+      if (!ok) return;
+      await ipc.emptyTrash();
+      await get().loadTrash();
+      get().showToast('回收站已清空');
+    } catch (e) {
+      console.error('emptyTrash failed:', e);
+      get().showToast(errMsg(e, '清空失败'));
+    }
+  },
+
+  // ── 视图 ──
   select(id) {
     set({ selectedId: id });
   },
@@ -340,6 +519,15 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   },
   setViewMode(m) {
     set({ viewMode: m });
+  },
+  setTheme(t) {
+    applyTheme(t);
+    try {
+      localStorage.setItem(THEME_KEY, t);
+    } catch {
+      /* 忽略持久化失败 */
+    }
+    set({ theme: t });
   },
   setDropTarget(id, mode = null) {
     const cur = get();

@@ -47,6 +47,11 @@ impl Db {
             self.conn
                 .execute("INSERT INTO schema_version (version) VALUES (1)", [])?;
         }
+        if current < 2 {
+            self.conn.execute_batch(MIGRATION_V2)?;
+            self.conn
+                .execute("INSERT INTO schema_version (version) VALUES (2)", [])?;
+        }
         Ok(())
     }
 }
@@ -68,11 +73,27 @@ CREATE TABLE nodes (
 CREATE INDEX idx_nodes_parent ON nodes(parent_id);
 "#;
 
-/// 启动备份（docs/02 §4）：v0.1 保留最近 1 份 .bak；首次运行（库不存在）跳过。
-pub fn startup_backup(db_path: &Path) -> std::io::Result<()> {
+/// v2（v0.3 M3）：回收站软删除 + 统计完成时间。
+const MIGRATION_V2: &str = r#"
+ALTER TABLE nodes ADD COLUMN deleted_at TEXT;
+ALTER TABLE nodes ADD COLUMN completed_at TEXT;
+CREATE INDEX idx_nodes_deleted ON nodes(deleted_at);
+"#;
+
+/// 启动备份（docs/02 §4 / docs/05 M3：保留最近 3 份轮转备份）。
+pub fn backup_db(db_path: &Path) -> std::io::Result<()> {
     if !db_path.exists() {
         return Ok(());
     }
-    let bak = db_path.with_extension("db.bak");
-    std::fs::copy(db_path, bak).map(|_| ())
+    let bak1 = db_path.with_extension("db.bak");
+    let bak2 = db_path.with_extension("db.bak2");
+    let bak3 = db_path.with_extension("db.bak3");
+    // 轮转：bak2 → bak3，bak1 → bak2
+    if bak2.exists() {
+        let _ = std::fs::rename(&bak2, &bak3);
+    }
+    if bak1.exists() {
+        let _ = std::fs::rename(&bak1, &bak2);
+    }
+    std::fs::copy(db_path, bak1).map(|_| ())
 }

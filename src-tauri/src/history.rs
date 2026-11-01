@@ -57,6 +57,12 @@ impl History {
         self.undo_stack.push_back(e.clone());
         Some(e)
     }
+
+    /// 切换文档时清空历史（跨文档撤销无意义）。
+    pub fn clear(&mut self) {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
 }
 
 /// undo 的 patch：恢复 before；并删除「操作中新建出来」的节点（after.upserted 里 before 不存在的 id）。

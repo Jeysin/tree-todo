@@ -37,6 +37,8 @@ pub fn create_node(
         collapsed: false,
         created_at: ts.clone(),
         updated_at: ts,
+        deleted_at: None,
+        completed_at: None,
     };
     queries::insert_node(tx, &node)?;
     let changed_ancestors = propagate_upward(tx, parent_id)?;
@@ -68,11 +70,10 @@ pub fn uncomplete(tx: &Transaction, id: &str) -> AppResult<Vec<Node>> {
     Ok(affected)
 }
 
-/// 删除节点（D1）：级联删除子孙，返回 (被删 id 列表, 被传播修改的祖先列表)。
+/// 删除节点（D1，v0.3 起为软删除进入回收站）：标记子树 deleted_at，返回被标记 id 列表。
 pub fn delete_node(tx: &Transaction, id: &str) -> AppResult<(Vec<String>, Vec<Node>)> {
     let node = queries::get_node(tx, id)?;
-    let removed = queries::subtree_ids(tx, id)?;
-    queries::delete_node(tx, id)?; // ON DELETE CASCADE 连带子孙
+    let removed = queries::soft_delete_subtree(tx, id, &now())?;
     let changed = propagate_upward(tx, node.parent_id.as_deref())?;
     Ok((removed, changed))
 }
@@ -174,7 +175,7 @@ pub fn recompute_subtree(tx: &Transaction, id: &str) -> AppResult<Vec<Node>> {
     Ok(changed)
 }
 
-/// 级联：子树（含自身）中所有 status != target 的节点 → target。
+/// 级联：子树（含自身）中所有 status != target 的未删节点 → target，并同步 completed_at。
 fn cascade_set_status(tx: &Transaction, id: &str, target: &str, ts: &str) -> AppResult<()> {
     tx.execute(
         "WITH RECURSIVE subtree(sid) AS (
@@ -182,8 +183,9 @@ fn cascade_set_status(tx: &Transaction, id: &str, target: &str, ts: &str) -> App
             UNION ALL
             SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id = s.sid
         )
-        UPDATE nodes SET status = ?2, updated_at = ?3
-        WHERE id IN (SELECT sid FROM subtree) AND status != ?2",
+        UPDATE nodes SET status = ?2, updated_at = ?3,
+            completed_at = CASE WHEN ?2 = 'done' THEN ?3 ELSE NULL END
+        WHERE id IN (SELECT sid FROM subtree) AND status != ?2 AND deleted_at IS NULL",
         params![id, target, ts],
     )?;
     Ok(())
@@ -531,5 +533,88 @@ mod tests {
         assert!(n.parent_id.is_none(), "B 应成为根节点");
         assert!((n.position - 5000.0).abs() < f64::EPSILON);
         assert_eq!(status(&db, &a), NodeStatus::Pending);
+    }
+
+    /// v0.3 软删除：删除进入回收站，视图不可见，父节点状态重算。
+    #[test]
+    fn t17_soft_delete_goes_to_trash() {
+        let db = db();
+        let p = create(&db, None, "P");
+        let b = create(&db, Some(&p), "B");
+        let c = create(&db, Some(&b), "C");
+        complete(&db, &c); // C done → B done → P done
+        assert_eq!(status(&db, &p), NodeStatus::Done);
+
+        let removed = delete(&db, &b);
+        assert_eq!(removed.len(), 2, "B、C 均被软删除");
+        assert!(queries::get_node(&db.conn, &b).is_err(), "视图不可见");
+        // 物理记录仍在回收站
+        let trash = queries::trash_items(&db.conn).unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].node.id, b);
+        assert_eq!(trash[0].descendant_count, 1, "含 1 个被删子孙");
+        // P 叶子化保持原状态（CC4）
+        assert_eq!(status(&db, &p), NodeStatus::Done);
+    }
+
+    /// v0.3 恢复：子树回归视图，父节点向上传播。
+    #[test]
+    fn t18_restore_from_trash() {
+        let db = db();
+        let p = create(&db, None, "P");
+        let b = create(&db, Some(&p), "B");
+        let _c = create(&db, Some(&b), "C");
+        delete(&db, &b);
+        assert!(queries::get_node(&db.conn, &b).is_err());
+
+        let tx = db.conn.unchecked_transaction().unwrap();
+        let restored = queries::restore_subtree(&tx, &b, "now").unwrap();
+        super::propagate_upward(&tx, Some(&p)).unwrap();
+        tx.commit().unwrap();
+
+        assert_eq!(restored.len(), 2, "B、C 均恢复");
+        assert!(queries::get_node(&db.conn, &b).is_ok());
+        assert!(queries::get_node(&db.conn, &p).is_ok());
+        assert_eq!(status(&db, &p), NodeStatus::Pending, "恢复 pending 子节点后父回退");
+        assert!(queries::trash_items(&db.conn).unwrap().is_empty());
+    }
+
+    /// v0.3 彻底删除：物理移除（含软删子孙）。
+    #[test]
+    fn t19_purge_removes_permanently() {
+        let db = db();
+        let a = create(&db, None, "A");
+        let b = create(&db, Some(&a), "B");
+        let _c = create(&db, Some(&b), "C");
+        delete(&db, &b);
+        assert_eq!(queries::trash_items(&db.conn).unwrap().len(), 1);
+
+        // 物理删除（CASCADE 清理子孙）
+        queries::delete_node(&db.conn, &b).unwrap();
+        assert!(queries::get_node_any(&db.conn, &b).is_err());
+        assert!(queries::get_node_any(&db.conn, &_c).is_err());
+        assert!(queries::trash_items(&db.conn).unwrap().is_empty());
+    }
+
+    /// v0.3 completed_at：随 status 变更维护（统计面板数据来源）。
+    #[test]
+    fn t20_completed_at_tracks_status() {
+        let db = db();
+        let a = create(&db, None, "A");
+        let b = create(&db, Some(&a), "B");
+        assert!(queries::get_node(&db.conn, &b).unwrap().completed_at.is_none());
+
+        complete(&db, &b); // 叶子完成
+        let nb = queries::get_node(&db.conn, &b).unwrap();
+        assert!(nb.completed_at.is_some(), "done 应有 completed_at");
+        let na = queries::get_node(&db.conn, &a).unwrap();
+        assert!(na.completed_at.is_some(), "自动完成的父节点也应有 completed_at");
+
+        uncomplete(&db, &b);
+        assert!(
+            queries::get_node(&db.conn, &b).unwrap().completed_at.is_none(),
+            "cancelled 应清除 completed_at"
+        );
+        assert!(queries::get_node(&db.conn, &a).unwrap().completed_at.is_none());
     }
 }

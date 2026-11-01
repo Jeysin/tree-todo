@@ -4,7 +4,14 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
-import type { Affected, CreateResult, TodoNode } from './types';
+import type {
+  Affected,
+  CreateResult,
+  DocIndex,
+  DocMeta,
+  TodoNode,
+  TrashItem,
+} from './types';
 
 export const ipc = {
   /** 全量树（启动加载一次，此后靠变更快照增量合并）。 */
@@ -51,4 +58,20 @@ export const ipc = {
 
   /** 从指定路径导入（追加 + id 重映射 + 状态校正）。 */
   importJson: (path: string): Promise<Affected> => invoke('import_json', { path }),
+
+  // ── 回收站（v0.3）──
+  listTrash: (): Promise<TrashItem[]> => invoke('list_trash'),
+  restoreTrash: (id: string): Promise<Affected> => invoke('restore_trash', { id }),
+  purgeTrash: (id: string): Promise<void> => invoke('purge_trash', { id }),
+  emptyTrash: (): Promise<void> => invoke('empty_trash'),
+
+  // ── 多文档（v0.3）──
+  listDocuments: (): Promise<DocIndex> => invoke('list_documents'),
+  createDocument: (name: string): Promise<DocMeta> => invoke('create_document', { name }),
+  renameDocument: (id: string, name: string): Promise<DocMeta> =>
+    invoke('rename_document', { id, name }),
+  deleteDocument: (id: string): Promise<DocIndex> => invoke('delete_document', { id }),
+  switchDocument: (id: string): Promise<void> => invoke('switch_document', { id }),
+  getCurrentDocument: (): Promise<DocMeta> => invoke('get_current_document'),
+  backupNow: (): Promise<void> => invoke('backup_now'),
 };

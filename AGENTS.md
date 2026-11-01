@@ -56,6 +56,7 @@ docs/           # 技术文档
 4. **新建节点永远是 pending**（不变量 I4），无任何例外。
 5. 修改 schema 必须走迁移（`schema_version`），禁止改表不升版本。
 6. **撤销历史**（v0.2 起）：除视图类操作（`set_collapsed` / `expand_nodes` / `collapse_all`）外，所有变更必须经 `history::run_with_history` 记录（before 快照 + after 变更）——绕过记录会导致撤销破坏数据一致性。回放走 `history::apply_patch`，禁止在回放后再次传播。
+7. **软删除**（v0.3 起）：所有视图查询必须过滤 `deleted_at IS NULL`（`queries.rs` 已统一处理，新增 SQL 不得遗漏）；彻底删除（purge）是物理删除、不进历史；`completed_at` 只能由 `update_status` / 级联 SQL 维护。
 
 ## 代码规范
 

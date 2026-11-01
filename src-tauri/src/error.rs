@@ -19,6 +19,10 @@ pub enum AppError {
     /// 导入文件格式错误（docs/02 §5）。
     #[error("导入文件格式错误: {0}")]
     ImportFormat(String),
+
+    /// 多文档：至少需要保留一个文档（docs/05 M3）。
+    #[error("至少需要保留一个文档")]
+    LastDocument,
 }
 
 impl Serialize for AppError {
@@ -32,6 +36,7 @@ impl Serialize for AppError {
             AppError::NodeNotFound(_) => "NodeNotFound",
             AppError::CyclicMove => "CyclicMove",
             AppError::ImportFormat(_) => "ImportFormat",
+            AppError::LastDocument => "LastDocument",
         };
         let mut s = serializer.serialize_struct("AppError", 2)?;
         s.serialize_field("code", code)?;

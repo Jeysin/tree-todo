@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
-/* 主题 token：明/暗跟随系统（docs/04-ui-ux-design.md §3.1） */
+/* 主题 token（docs/04 §3.1）：
+ * 优先级：data-theme 显式指定 > 系统偏好（prefers-color-scheme）。
+ * 由 store.setTheme 写入 <html data-theme>（system 时移除属性）。 */
 :root {
   --bg-base: #f7f8fa;
   --bg-surface: #ffffff;
@@ -25,6 +27,32 @@
     --warning: #f5a623;
     --border-color: #2e3440;
   }
+}
+
+/* 显式浅色（覆盖系统深色） */
+:root[data-theme="light"] {
+  --bg-base: #f7f8fa;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --text-primary: #1a1d23;
+  --text-muted: #6b7280;
+  --accent: #2f6fed;
+  --success: #16a34a;
+  --warning: #d97706;
+  --border-color: #e2e5ea;
+}
+
+/* 显式深色（覆盖系统浅色） */
+:root[data-theme="dark"] {
+  --bg-base: #16181d;
+  --bg-surface: #1f232b;
+  --bg-elevated: #262b35;
+  --text-primary: #e7eaf0;
+  --text-muted: #8b93a1;
+  --accent: #4f8cff;
+  --success: #3ecf8e;
+  --warning: #f5a623;
+  --border-color: #2e3440;
 }
 
 @theme inline {

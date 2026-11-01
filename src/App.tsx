@@ -1,27 +1,34 @@
 import { useEffect } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 
+import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { ToastContainer } from './components/Toast';
 import { TopBar } from './components/TopBar';
 import { useTodoStore } from './stores/todoStore';
 import { FlatView } from './views/flat/FlatView';
+import { StatsView } from './views/stats/StatsView';
+import { TrashView } from './views/trash/TrashView';
 import { TreeView } from './views/tree/TreeView';
 
 function App() {
   const viewMode = useTodoStore(s => s.viewMode);
   const loaded = useTodoStore(s => s.loaded);
   const loadTree = useTodoStore(s => s.loadTree);
+  const loadDocuments = useTodoStore(s => s.loadDocuments);
+  const loadTrash = useTodoStore(s => s.loadTrash);
   const setViewMode = useTodoStore(s => s.setViewMode);
   const undo = useTodoStore(s => s.undo);
   const redo = useTodoStore(s => s.redo);
 
-  // 启动：一次性加载全量树
+  // 启动：文档列表 + 当前文档数据 + 回收站徽标
   useEffect(() => {
+    void loadDocuments();
     void loadTree();
-  }, [loadTree]);
+    void loadTrash();
+  }, [loadDocuments, loadTree, loadTrash]);
 
-  // 全局快捷键：Ctrl/Cmd + 1/2 切视图；Ctrl/Cmd + Z 撤销、Shift+Z / Y 重做
+  // 全局快捷键：Ctrl/Cmd + 1/2/3 切换视图；Ctrl/Cmd + Z 撤销、Shift+Z / Y 重做
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -35,6 +42,9 @@ function App() {
       } else if (key === '2') {
         e.preventDefault();
         setViewMode('flat');
+      } else if (key === '3') {
+        e.preventDefault();
+        setViewMode('stats');
       } else if (key === 'z' && !isEditable) {
         e.preventDefault();
         if (e.shiftKey) void redo();
@@ -56,12 +66,18 @@ function App() {
 
   return (
     <ReactFlowProvider>
-      <div className="flex flex-col h-full">
-        <TopBar />
-        <main className="relative flex-1 min-h-0">
-          {viewMode === 'tree' ? <TreeView /> : <FlatView />}
-        </main>
-        <StatusBar />
+      <div className="flex h-full">
+        <Sidebar />
+        <div className="flex-1 flex flex-col min-w-0">
+          <TopBar />
+          <main className="relative flex-1 min-h-0">
+            {viewMode === 'tree' && <TreeView />}
+            {viewMode === 'flat' && <FlatView />}
+            {viewMode === 'stats' && <StatsView />}
+            {viewMode === 'trash' && <TrashView />}
+          </main>
+          <StatusBar />
+        </div>
       </div>
       <ToastContainer />
     </ReactFlowProvider>

@@ -12,6 +12,10 @@ export interface TodoNode {
   collapsed: boolean;
   createdAt: string;
   updatedAt: string;
+  /** v0.3 软删除时间（非空 = 在回收站）。 */
+  deletedAt: string | null;
+  /** v0.3 完成时间（统计用；pending 时为 null）。 */
+  completedAt: string | null;
 }
 
 /** 变更类 command 的统一返回（docs/01 D6：受影响快照）。 */
@@ -28,6 +32,25 @@ export interface CreateResult {
 
 /** Rust 侧 AppError 的序列化形态（docs/01 D6：带错误码）。 */
 export interface AppError {
-  code: 'Db' | 'Io' | 'NodeNotFound' | 'CyclicMove';
+  code: 'Db' | 'Io' | 'NodeNotFound' | 'CyclicMove' | 'ImportFormat' | 'LastDocument';
   message: string;
+}
+
+/** 回收站条目（v0.3 软删除）。 */
+export interface TrashItem {
+  node: TodoNode;
+  descendantCount: number;
+}
+
+/** 文档元数据（v0.3 多文档）。 */
+export interface DocMeta {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+/** 文档索引（documents.json）。 */
+export interface DocIndex {
+  documents: DocMeta[];
+  lastOpened: string | null;
 }

@@ -33,6 +33,16 @@ CREATE TABLE nodes (
 CREATE INDEX idx_nodes_parent ON nodes(parent_id);
 ```
 
+**v2 迁移（v0.3 回收站与统计）**：
+
+```sql
+ALTER TABLE nodes ADD COLUMN deleted_at TEXT;   -- 软删除时间（非空 = 在回收站）
+ALTER TABLE nodes ADD COLUMN completed_at TEXT; -- 完成时间（随 status 自动维护，统计用）
+CREATE INDEX idx_nodes_deleted ON nodes(deleted_at);
+```
+
+> **查询铁律（v0.3 起）**：所有「视图查询」必须过滤 `deleted_at IS NULL`；仅回收站相关查询（trash_items / restore / purge）例外。`completed_at` 由 `update_status` 与级联 SQL 统一维护（done → now，pending → NULL），不得手工赋值。
+
 ### 1.3 字段设计说明
 
 | 字段 | 设计要点 |
@@ -66,7 +76,9 @@ CREATE INDEX idx_nodes_parent ON nodes(parent_id);
 | M1 | 手动完成（叶子） | → `done` | — | ✅ |
 | M2 | 手动完成（非叶子） | → `done` | **所有 `pending` 子孙 → `done`**（递归） | ✅ |
 | M3 | 手动取消完成 | → `pending` | **所有 `done` 子孙 → `pending`**（递归） | ✅ |
-| D1 | 删除节点 | 删除 | 子孙级联删除 | ✅ |
+| D1 | 删除节点 | 软删除：子树标记 `deleted_at`（进回收站） | 子孙一并标记 | ✅（父级重算，已删节点不参与聚合） |
+| D2 | 回收站恢复 | 清 `deleted_at`（子树 + 被删祖先链） | — | ✅ |
+| D3 | 彻底删除 / 清空回收站 | 物理删除（不可恢复，不进历史） | 级联物理删除 | — |
 | E1 | 编辑内容 / 备注 | 状态不变 | — | ❌ |
 | MV1 | 移动节点（v0.2） | 状态不变 | — | ✅ 旧路径与新路径分别传播 |
 

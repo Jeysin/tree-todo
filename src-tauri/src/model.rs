@@ -25,6 +25,10 @@ impl NodeStatus {
 }
 
 /// 节点（docs/02 §1.2）：序列化为 camelCase 供前端消费。
+///
+/// v0.3 新增：
+/// - `deleted_at`：软删除时间（回收站，docs/05 M3）；常规查询一律过滤非空。
+/// - `completed_at`：完成时间（统计面板"最近 7 天完成"，随 status 变更维护）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Node {
@@ -37,6 +41,8 @@ pub struct Node {
     pub collapsed: bool,
     pub created_at: String,
     pub updated_at: String,
+    pub deleted_at: Option<String>,
+    pub completed_at: Option<String>,
 }
 
 /// 变更类 command 的统一返回（docs/01 D6：受影响快照）。
@@ -53,6 +59,31 @@ pub struct Affected {
 pub struct CreateResult {
     pub new_id: String,
     pub upserted: Vec<Node>,
+}
+
+/// 回收站条目：被软删的顶层节点 + 其被删子孙数。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashItem {
+    pub node: Node,
+    pub descendant_count: i64,
+}
+
+/// 文档元数据（docs/05 M3 多文档：每个文档一个独立 SQLite 文件）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocMeta {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+/// 文档索引（app_data_dir/documents.json）。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DocIndex {
+    pub documents: Vec<DocMeta>,
+    pub last_opened: Option<String>,
 }
 
 /// 导入/导出文件的节点格式（docs/02 §5：JSON 字段为 snake_case）。
@@ -74,6 +105,9 @@ pub struct ImportNode {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// v0.3 起导出（旧文件缺省为 None，统计会视为未知完成时间）。
+    #[serde(default)]
+    pub completed_at: Option<String>,
 }
 
 fn default_status_pending() -> String {
@@ -95,6 +129,7 @@ impl From<&Node> for ImportNode {
             collapsed: n.collapsed,
             created_at: n.created_at.clone(),
             updated_at: n.updated_at.clone(),
+            completed_at: n.completed_at.clone(),
         }
     }
 }
@@ -111,6 +146,8 @@ impl ImportNode {
             collapsed: self.collapsed,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            deleted_at: None,
+            completed_at: self.completed_at,
         }
     }
 }

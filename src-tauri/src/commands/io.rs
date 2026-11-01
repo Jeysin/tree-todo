@@ -18,8 +18,8 @@ fn now() -> String {
 /// 导出全量数据到指定路径（前端经 dialog 选择路径）。
 #[tauri::command]
 pub fn export_json(state: State<'_, AppState>, path: String) -> AppResult<()> {
-    let db = state.db.lock().expect("db mutex poisoned");
-    let nodes = queries::all_nodes(&db.conn)?;
+    let cur = state.current.lock().expect("current doc mutex poisoned");
+    let nodes = queries::all_nodes(&cur.db.conn)?;
     let doc = ExportDoc {
         format: "tree-todo.export".to_string(),
         version: 1,
@@ -55,8 +55,8 @@ pub fn import_json(state: State<'_, AppState>, path: String) -> AppResult<Affect
         return Err(AppError::ImportFormat("文件不包含任何节点".into()));
     }
 
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut cur = state.current.lock().expect("current doc mutex poisoned");
+    let tx = cur.db.conn.transaction()?;
 
     // 1) id 冲突检测与重映射
     let existing: HashSet<String> = queries::all_nodes(&tx)?

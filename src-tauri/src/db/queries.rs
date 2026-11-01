@@ -1,12 +1,15 @@
 //! SQL 查询层：所有语句集中于此，propagate.rs 与 commands/ 只经由这里访问 SQLite。
+//!
+//! v0.3：所有「视图查询」一律过滤 `deleted_at IS NULL`（回收站机制）；
+//! status 变更统一维护 `completed_at`（统计面板数据来源）。
 
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{AppError, AppResult};
-use crate::model::{Node, NodeStatus};
+use crate::model::{Node, NodeStatus, TrashItem};
 
 const COLS: &str =
-    "id, parent_id, content, note, status, position, collapsed, created_at, updated_at";
+    "id, parent_id, content, note, status, position, collapsed, created_at, updated_at, deleted_at, completed_at";
 
 fn row_to_node(row: &rusqlite::Row) -> rusqlite::Result<Node> {
     Ok(Node {
@@ -19,10 +22,35 @@ fn row_to_node(row: &rusqlite::Row) -> rusqlite::Result<Node> {
         collapsed: row.get::<_, i64>(6)? != 0,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
+        deleted_at: row.get(9)?,
+        completed_at: row.get(10)?,
     })
 }
 
+fn collect(mut stmt: rusqlite::Statement<'_>, params: &[&dyn rusqlite::ToSql]) -> AppResult<Vec<Node>> {
+    let rows = stmt.query_map(params, row_to_node)?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// 常规查询：只返回未删除节点。
 pub fn get_node(conn: &Connection, id: &str) -> AppResult<Node> {
+    let node = conn
+        .query_row(
+            &format!("SELECT {COLS} FROM nodes WHERE id = ?1 AND deleted_at IS NULL"),
+            params![id],
+            row_to_node,
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NodeNotFound(id.to_string()))?;
+    Ok(node)
+}
+
+/// 含回收站节点的查询（恢复祖先链等场景）。
+pub fn get_node_any(conn: &Connection, id: &str) -> AppResult<Node> {
     let node = conn
         .query_row(
             &format!("SELECT {COLS} FROM nodes WHERE id = ?1"),
@@ -35,25 +63,22 @@ pub fn get_node(conn: &Connection, id: &str) -> AppResult<Node> {
 }
 
 pub fn all_nodes(conn: &Connection) -> AppResult<Vec<Node>> {
-    let mut stmt = conn.prepare(&format!("SELECT {COLS} FROM nodes"))?;
-    let rows = stmt.query_map([], row_to_node)?;
-    let mut nodes = Vec::new();
-    for row in rows {
-        nodes.push(row?);
-    }
-    Ok(nodes)
+    let stmt = conn.prepare(&format!(
+        "SELECT {COLS} FROM nodes WHERE deleted_at IS NULL"
+    ))?;
+    collect(stmt, &[])
 }
 
 /// 同级末尾插入位置（docs/02 §1.3 分数定位法：max + 1024 步长起步）。
 pub fn next_position(conn: &Connection, parent_id: Option<&str>) -> AppResult<f64> {
     let max: Option<f64> = match parent_id {
         Some(pid) => conn.query_row(
-            "SELECT MAX(position) FROM nodes WHERE parent_id = ?1",
+            "SELECT MAX(position) FROM nodes WHERE parent_id = ?1 AND deleted_at IS NULL",
             params![pid],
             |r| r.get(0),
         ),
         None => conn.query_row(
-            "SELECT MAX(position) FROM nodes WHERE parent_id IS NULL",
+            "SELECT MAX(position) FROM nodes WHERE parent_id IS NULL AND deleted_at IS NULL",
             [],
             |r| r.get(0),
         ),
@@ -64,28 +89,19 @@ pub fn next_position(conn: &Connection, parent_id: Option<&str>) -> AppResult<f6
 }
 
 pub fn insert_node(conn: &Connection, node: &Node) -> AppResult<()> {
-    conn.execute(
-        "INSERT INTO nodes (id, parent_id, content, note, status, position, collapsed, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![
-            node.id,
-            node.parent_id,
-            node.content,
-            node.note,
-            node.status.as_str(),
-            node.position,
-            node.collapsed as i64,
-            node.created_at,
-            node.updated_at,
-        ],
-    )?;
-    Ok(())
+    upsert_node(conn, node)
 }
 
 pub fn update_status(conn: &Connection, id: &str, status: NodeStatus, now: &str) -> AppResult<()> {
+    // v0.3：completed_at 随 status 统一维护（done → now，pending → NULL）
+    let completed: Option<&str> = if status == NodeStatus::Done {
+        Some(now)
+    } else {
+        None
+    };
     conn.execute(
-        "UPDATE nodes SET status = ?2, updated_at = ?3 WHERE id = ?1",
-        params![id, status.as_str(), now],
+        "UPDATE nodes SET status = ?2, completed_at = ?3, updated_at = ?4 WHERE id = ?1",
+        params![id, status.as_str(), completed, now],
     )?;
     Ok(())
 }
@@ -93,8 +109,20 @@ pub fn update_status(conn: &Connection, id: &str, status: NodeStatus, now: &str)
 /// E1 编辑内容：不触发任何状态变化（docs/02 §2.1）。
 pub fn update_content(conn: &Connection, id: &str, content: &str, now: &str) -> AppResult<()> {
     let n = conn.execute(
-        "UPDATE nodes SET content = ?2, updated_at = ?3 WHERE id = ?1",
+        "UPDATE nodes SET content = ?2, updated_at = ?3 WHERE id = ?1 AND deleted_at IS NULL",
         params![id, content, now],
+    )?;
+    if n == 0 {
+        return Err(AppError::NodeNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+/// 编辑备注（E1）。
+pub fn update_note(conn: &Connection, id: &str, note: &str, now: &str) -> AppResult<()> {
+    let n = conn.execute(
+        "UPDATE nodes SET note = ?2, updated_at = ?3 WHERE id = ?1 AND deleted_at IS NULL",
+        params![id, note, now],
     )?;
     if n == 0 {
         return Err(AppError::NodeNotFound(id.to_string()));
@@ -104,7 +132,7 @@ pub fn update_content(conn: &Connection, id: &str, content: &str, now: &str) -> 
 
 pub fn set_collapsed(conn: &Connection, id: &str, collapsed: bool, now: &str) -> AppResult<()> {
     let n = conn.execute(
-        "UPDATE nodes SET collapsed = ?2, updated_at = ?3 WHERE id = ?1",
+        "UPDATE nodes SET collapsed = ?2, updated_at = ?3 WHERE id = ?1 AND deleted_at IS NULL",
         params![id, collapsed as i64, now],
     )?;
     if n == 0 {
@@ -113,12 +141,109 @@ pub fn set_collapsed(conn: &Connection, id: &str, collapsed: bool, now: &str) ->
     Ok(())
 }
 
+/// 物理删除（彻底删除 / 撤销回放中的删除操作）。级联由 ON DELETE CASCADE 承担。
 pub fn delete_node(conn: &Connection, id: &str) -> AppResult<()> {
     conn.execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
     Ok(())
 }
 
-/// 子树全部节点（含自身）——级联操作后返回受影响快照用。
+/// 软删除整棵子树（v0.3 回收站）：返回实际被标记的 id 列表（未删 → 已删）。
+pub fn soft_delete_subtree(conn: &Connection, id: &str, now: &str) -> AppResult<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE subtree(sid) AS (
+            SELECT id FROM nodes WHERE id = ?1
+            UNION ALL
+            SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id = s.sid
+        )
+        UPDATE nodes SET deleted_at = ?2, updated_at = ?2
+        WHERE id IN (SELECT sid FROM subtree) AND deleted_at IS NULL
+        RETURNING id",
+    )?;
+    let rows = stmt.query_map(params![id, now], |r| r.get::<_, String>(0))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row?);
+    }
+    Ok(ids)
+}
+
+/// 恢复整棵子树（清除 deleted_at），返回被恢复的节点。
+pub fn restore_subtree(conn: &Connection, id: &str, now: &str) -> AppResult<Vec<Node>> {
+    let mut stmt = conn.prepare(&format!(
+        "WITH RECURSIVE subtree(sid) AS (
+            SELECT id FROM nodes WHERE id = ?1
+            UNION ALL
+            SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id = s.sid
+        )
+        UPDATE nodes SET deleted_at = NULL, updated_at = ?2
+        WHERE id IN (SELECT sid FROM subtree) AND deleted_at IS NOT NULL
+        RETURNING {COLS}"
+    ))?;
+    let rows = stmt.query_map(params![id, now], row_to_node)?;
+    let mut nodes = Vec::new();
+    for row in rows {
+        nodes.push(row?);
+    }
+    Ok(nodes)
+}
+
+/// 恢复单个节点（仅清 deleted_at，用于祖先链联动恢复）。
+pub fn restore_node(conn: &Connection, id: &str, now: &str) -> AppResult<Option<Node>> {
+    let mut stmt = conn.prepare(&format!(
+        "UPDATE nodes SET deleted_at = NULL, updated_at = ?2
+         WHERE id = ?1 AND deleted_at IS NOT NULL
+         RETURNING {COLS}"
+    ))?;
+    let node = stmt
+        .query_row(params![id, now], row_to_node)
+        .optional()?;
+    Ok(node)
+}
+
+/// 回收站顶层条目：已删且父节点不存在或未删。
+pub fn trash_items(conn: &Connection) -> AppResult<Vec<TrashItem>> {
+    let nodes = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLS} FROM nodes n
+             WHERE deleted_at IS NOT NULL AND (
+               parent_id IS NULL
+               OR NOT EXISTS (SELECT 1 FROM nodes p WHERE p.id = n.parent_id AND p.deleted_at IS NOT NULL)
+             )
+             ORDER BY deleted_at DESC"
+        ))?;
+        let rows = stmt.query_map([], row_to_node)?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        v
+    };
+    let mut items = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let count: i64 = conn.query_row(
+            "WITH RECURSIVE sub(sid) AS (
+                SELECT id FROM nodes WHERE parent_id = ?1
+                UNION ALL
+                SELECT n.id FROM nodes n JOIN sub s ON n.parent_id = s.sid
+             ) SELECT COUNT(*) FROM sub",
+            params![node.id],
+            |r| r.get(0),
+        )?;
+        items.push(TrashItem {
+            node,
+            descendant_count: count,
+        });
+    }
+    Ok(items)
+}
+
+/// 清空回收站（物理删除所有软删节点）。
+pub fn empty_trash(conn: &Connection) -> AppResult<()> {
+    conn.execute("DELETE FROM nodes WHERE deleted_at IS NOT NULL", [])?;
+    Ok(())
+}
+
+/// 子树全部节点（含自身）——级联操作后返回受影响快照用（仅未删节点）。
 pub fn subtree_nodes(conn: &Connection, id: &str) -> AppResult<Vec<Node>> {
     let mut stmt = conn.prepare(&format!(
         "WITH RECURSIVE subtree(sid) AS (
@@ -126,7 +251,8 @@ pub fn subtree_nodes(conn: &Connection, id: &str) -> AppResult<Vec<Node>> {
             UNION ALL
             SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id = s.sid
         )
-        SELECT {COLS} FROM nodes WHERE id IN (SELECT sid FROM subtree)"
+        SELECT {COLS} FROM nodes
+        WHERE id IN (SELECT sid FROM subtree) AND deleted_at IS NULL"
     ))?;
     let rows = stmt.query_map(params![id], row_to_node)?;
     let mut nodes = Vec::new();
@@ -136,7 +262,7 @@ pub fn subtree_nodes(conn: &Connection, id: &str) -> AppResult<Vec<Node>> {
     Ok(nodes)
 }
 
-/// 子树 id 列表（含自身）——删除时先收集，供前端从快照中移除。
+/// 子树 id 列表（含自身，仅未删节点）——删除时先收集，供前端从快照中移除。
 pub fn subtree_ids(conn: &Connection, id: &str) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare(
         "WITH RECURSIVE subtree(sid) AS (
@@ -144,7 +270,7 @@ pub fn subtree_ids(conn: &Connection, id: &str) -> AppResult<Vec<String>> {
             UNION ALL
             SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id = s.sid
         )
-        SELECT sid FROM subtree",
+        SELECT sid FROM subtree WHERE sid IN (SELECT id FROM nodes WHERE deleted_at IS NULL)",
     )?;
     let rows = stmt.query_map(params![id], |r| r.get::<_, String>(0))?;
     let mut ids = Vec::new();
@@ -156,7 +282,7 @@ pub fn subtree_ids(conn: &Connection, id: &str) -> AppResult<Vec<String>> {
 
 pub fn child_count(conn: &Connection, parent: &str) -> AppResult<i64> {
     let n = conn.query_row(
-        "SELECT COUNT(*) FROM nodes WHERE parent_id = ?1",
+        "SELECT COUNT(*) FROM nodes WHERE parent_id = ?1 AND deleted_at IS NULL",
         params![parent],
         |r| r.get(0),
     )?;
@@ -165,7 +291,7 @@ pub fn child_count(conn: &Connection, parent: &str) -> AppResult<i64> {
 
 pub fn pending_child_count(conn: &Connection, parent: &str) -> AppResult<i64> {
     let n = conn.query_row(
-        "SELECT COUNT(*) FROM nodes WHERE parent_id = ?1 AND status != 'done'",
+        "SELECT COUNT(*) FROM nodes WHERE parent_id = ?1 AND deleted_at IS NULL AND status != 'done'",
         params![parent],
         |r| r.get(0),
     )?;
@@ -175,8 +301,8 @@ pub fn pending_child_count(conn: &Connection, parent: &str) -> AppResult<i64> {
 /// 全字段 upsert（撤销/重做与导入用）。
 pub fn upsert_node(conn: &Connection, node: &Node) -> AppResult<()> {
     conn.execute(
-        "INSERT INTO nodes (id, parent_id, content, note, status, position, collapsed, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "INSERT INTO nodes (id, parent_id, content, note, status, position, collapsed, created_at, updated_at, deleted_at, completed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT(id) DO UPDATE SET
            parent_id = excluded.parent_id,
            content = excluded.content,
@@ -185,7 +311,9 @@ pub fn upsert_node(conn: &Connection, node: &Node) -> AppResult<()> {
            position = excluded.position,
            collapsed = excluded.collapsed,
            created_at = excluded.created_at,
-           updated_at = excluded.updated_at",
+           updated_at = excluded.updated_at,
+           deleted_at = excluded.deleted_at,
+           completed_at = excluded.completed_at",
         params![
             node.id,
             node.parent_id,
@@ -196,6 +324,8 @@ pub fn upsert_node(conn: &Connection, node: &Node) -> AppResult<()> {
             node.collapsed as i64,
             node.created_at,
             node.updated_at,
+            node.deleted_at,
+            node.completed_at,
         ],
     )?;
     Ok(())
@@ -210,20 +340,8 @@ pub fn move_node(
     now: &str,
 ) -> AppResult<()> {
     let n = conn.execute(
-        "UPDATE nodes SET parent_id = ?2, position = ?3, updated_at = ?4 WHERE id = ?1",
+        "UPDATE nodes SET parent_id = ?2, position = ?3, updated_at = ?4 WHERE id = ?1 AND deleted_at IS NULL",
         params![id, new_parent, position, now],
-    )?;
-    if n == 0 {
-        return Err(AppError::NodeNotFound(id.to_string()));
-    }
-    Ok(())
-}
-
-/// 编辑备注（E1：不触发状态变化）。
-pub fn update_note(conn: &Connection, id: &str, note: &str, now: &str) -> AppResult<()> {
-    let n = conn.execute(
-        "UPDATE nodes SET note = ?2, updated_at = ?3 WHERE id = ?1",
-        params![id, note, now],
     )?;
     if n == 0 {
         return Err(AppError::NodeNotFound(id.to_string()));
@@ -244,7 +362,8 @@ pub fn ancestors(conn: &Connection, start: Option<&str>) -> AppResult<Vec<Node>>
 }
 
 pub fn children_ids(conn: &Connection, parent: &str) -> AppResult<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT id FROM nodes WHERE parent_id = ?1")?;
+    let mut stmt =
+        conn.prepare("SELECT id FROM nodes WHERE parent_id = ?1 AND deleted_at IS NULL")?;
     let rows = stmt.query_map(params![parent], |r| r.get::<_, String>(0))?;
     let mut ids = Vec::new();
     for row in rows {
@@ -256,7 +375,8 @@ pub fn children_ids(conn: &Connection, parent: &str) -> AppResult<Vec<String>> {
 /// 折叠/展开全部：只更新状态变化的行，RETURNING 精确返回受影响节点。
 pub fn collapse_all(conn: &Connection, collapsed: bool, now: &str) -> AppResult<Vec<Node>> {
     let mut stmt = conn.prepare(&format!(
-        "UPDATE nodes SET collapsed = ?1, updated_at = ?2 WHERE collapsed != ?1 RETURNING {COLS}"
+        "UPDATE nodes SET collapsed = ?1, updated_at = ?2
+         WHERE collapsed != ?1 AND deleted_at IS NULL RETURNING {COLS}"
     ))?;
     let rows = stmt.query_map(params![collapsed as i64, now], row_to_node)?;
     let mut nodes = Vec::new();

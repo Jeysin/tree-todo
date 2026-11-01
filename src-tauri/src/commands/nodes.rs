@@ -2,6 +2,7 @@
 //! 约定（docs/01 D6）：变更类 command 返回「受影响快照」，前端以返回结果为准受控刷新。
 //! 撤销（docs/05 M2）：除视图类（set_collapsed / expand_nodes / collapse_all）外，
 //! 所有变更均记录 history entry（before 快照 + after 变更）。
+//! v0.3：数据源为「当前文档」（state.current），切换文档不影响其他文档。
 
 use tauri::State;
 
@@ -16,11 +17,11 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-/// 全量树：启动时加载一次，此后靠变更快照增量合并。
+/// 全量树：启动 / 切换文档时加载一次，此后靠变更快照增量合并。
 #[tauri::command]
 pub fn get_tree(state: State<'_, AppState>) -> AppResult<Vec<Node>> {
-    let db = state.db.lock().expect("db mutex poisoned");
-    queries::all_nodes(&db.conn)
+    let doc = state.current.lock().expect("current doc mutex poisoned");
+    queries::all_nodes(&doc.db.conn)
 }
 
 /// 创建节点（C1）：父节点为 None 时创建根。
@@ -30,8 +31,8 @@ pub fn create_node(
     parent_id: Option<String>,
     content: String,
 ) -> AppResult<CreateResult> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     if let Some(pid) = parent_id.as_deref() {
         let _ = queries::get_node(&tx, pid)?; // 父不存在 → NodeNotFound
     }
@@ -61,8 +62,8 @@ pub fn update_content(
     id: String,
     content: String,
 ) -> AppResult<Affected> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let before = vec![queries::get_node(&tx, &id)?];
     let mut history = state.history.lock().expect("history mutex poisoned");
     let affected = history::run_with_history(&tx, before, &mut history, |tx| {
@@ -79,8 +80,8 @@ pub fn update_content(
 /// 编辑备注（E1：不触发状态变化）。
 #[tauri::command]
 pub fn update_note(state: State<'_, AppState>, id: String, note: String) -> AppResult<Affected> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let before = vec![queries::get_node(&tx, &id)?];
     let mut history = state.history.lock().expect("history mutex poisoned");
     let affected = history::run_with_history(&tx, before, &mut history, |tx| {
@@ -97,8 +98,8 @@ pub fn update_note(state: State<'_, AppState>, id: String, note: String) -> AppR
 /// 切换状态：pending → complete（M1/M2 级联）；done → uncomplete（M3 级联）。
 #[tauri::command]
 pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affected> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
     let mut before = queries::subtree_nodes(&tx, &id)?;
     before.extend(queries::ancestors(&tx, node.parent_id.as_deref())?);
@@ -117,11 +118,11 @@ pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affect
     Ok(affected)
 }
 
-/// 删除节点（D1）：级联删除子孙，返回被删 id 供前端移除快照（v0.2：静默删除 + toast 撤销）。
+/// 删除节点（D1，v0.3 软删除进入回收站）：返回被删 id 供前端移除快照。
 #[tauri::command]
 pub fn delete_node(state: State<'_, AppState>, id: String) -> AppResult<Affected> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
     let mut before = queries::subtree_nodes(&tx, &id)?;
     before.extend(queries::ancestors(&tx, node.parent_id.as_deref())?);
@@ -142,10 +143,9 @@ pub fn move_node(
     new_parent_id: Option<String>,
     position: Option<f64>,
 ) -> AppResult<Affected> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
-    // before：被移动节点 + 旧祖先链 + 新祖先链（去重）
     let mut before = vec![node.clone()];
     let mut seen: std::collections::HashSet<String> = before.iter().map(|n| n.id.clone()).collect();
     for chain in [
@@ -170,15 +170,15 @@ pub fn move_node(
     Ok(affected)
 }
 
-/// 折叠/展开（视图状态持久化，docs/02 §1.3 collapsed 字段；不计入撤销历史）。
+/// 折叠/展开（视图状态持久化，不计入撤销历史）。
 #[tauri::command]
 pub fn set_collapsed(
     state: State<'_, AppState>,
     id: String,
     collapsed: bool,
 ) -> AppResult<Affected> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     queries::set_collapsed(&tx, &id, collapsed, &now())?;
     let node = queries::get_node(&tx, &id)?;
     tx.commit()?;
@@ -188,11 +188,11 @@ pub fn set_collapsed(
     })
 }
 
-/// 批量展开（平铺视图跳转定位：一次性展开祖先链，避免 N 次 IPC 往返）。
+/// 批量展开（跳转定位：一次性展开祖先链，避免 N 次 IPC 往返）。
 #[tauri::command]
 pub fn expand_nodes(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<Affected> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let mut upserted = Vec::with_capacity(ids.len());
     for id in &ids {
         queries::set_collapsed(&tx, id, false, &now())?;
@@ -208,8 +208,8 @@ pub fn expand_nodes(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<A
 /// 折叠/展开全部（视图操作，不计入撤销历史）。
 #[tauri::command]
 pub fn collapse_all(state: State<'_, AppState>, collapsed: bool) -> AppResult<Affected> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let upserted = queries::collapse_all(&tx, collapsed, &now())?;
     tx.commit()?;
     Ok(Affected {
@@ -221,8 +221,8 @@ pub fn collapse_all(state: State<'_, AppState>, collapsed: bool) -> AppResult<Af
 /// 撤销：返回可直接合并的 patch（无历史时为 null）。
 #[tauri::command]
 pub fn undo(state: State<'_, AppState>) -> AppResult<Option<Affected>> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let mut history = state.history.lock().expect("history mutex poisoned");
     let patch = history::undo(&tx, &mut history)?;
     tx.commit()?;
@@ -232,8 +232,8 @@ pub fn undo(state: State<'_, AppState>) -> AppResult<Option<Affected>> {
 /// 重做。
 #[tauri::command]
 pub fn redo(state: State<'_, AppState>) -> AppResult<Option<Affected>> {
-    let mut db = state.db.lock().expect("db mutex poisoned");
-    let tx = db.conn.transaction()?;
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let tx = doc.db.conn.transaction()?;
     let mut history = state.history.lock().expect("history mutex poisoned");
     let patch = history::redo(&tx, &mut history)?;
     tx.commit()?;
