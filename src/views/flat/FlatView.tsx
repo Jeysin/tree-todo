@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { useMemo } from 'react';
+import { Check } from 'lucide-react';
 
 import type { TodoNode } from '../../ipc/types';
 import { formatDoneTime } from '../../lib/time';
@@ -18,7 +18,7 @@ function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string)
   return (
     <div
       onClick={() => onReveal(leaf.id)}
-      className="group flex items-center gap-2.5 px-4 py-2 rounded-lg cursor-pointer hover:bg-surface border border-transparent hover:border-border transition-colors"
+      className="group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer hover:bg-surface border border-transparent hover:border-border transition-colors"
     >
       <button
         onClick={e => {
@@ -50,13 +50,53 @@ function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string)
   );
 }
 
-/** 平铺视图（docs/03 §3）：只列叶子节点，分「待处理 / 已完成」两组。 */
+interface FlatColumnProps {
+  title: string;
+  count: number;
+  tone: 'pending' | 'done';
+  rows: LeafRowData[];
+  empty: string;
+  onReveal: (id: string) => void;
+}
+
+/** 单列：表头吸顶，列表独立滚动，两列互不影响。 */
+function FlatColumn({ title, count, tone, rows, empty, onReveal }: FlatColumnProps) {
+  const dot = tone === 'pending' ? 'bg-accent' : 'bg-success';
+  const badge =
+    tone === 'pending' ? 'bg-accent/15 text-accent' : 'bg-success/15 text-success';
+  return (
+    <section className="flex flex-col min-h-0 min-w-0">
+      <header className="flex items-center gap-2 h-11 px-4 border-b border-border shrink-0 select-none">
+        <span className={['w-1.5 h-1.5 rounded-full shrink-0', dot].join(' ')} />
+        <h2 className="text-xs font-medium text-muted uppercase tracking-wider">{title}</h2>
+        <span className={['px-1.5 py-0.5 rounded-full text-[11px] leading-3 tabular-nums', badge].join(' ')}>
+          {count}
+        </span>
+      </header>
+      <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
+        {rows.length === 0 ? (
+          <p className="px-3 py-10 text-sm text-muted/70 text-center">{empty}</p>
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            {rows.map(d => (
+              <LeafRow key={d.leaf.id} data={d} onReveal={onReveal} />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * 平铺视图（docs/03 §3）：只列叶子节点。
+ * 「待处理」在左、「已完成」在右，双栏并列各占一半宽度，各自独立滚动，充分利用宽屏空间。
+ */
 export function FlatView() {
   const nodes = useTodoStore(s => s.nodes);
   const roots = useTodoStore(s => s.roots);
   const childrenOf = useTodoStore(s => s.childrenOf);
   const revealNode = useTodoStore(s => s.revealNode);
-  const [doneOpen, setDoneOpen] = useState(false);
 
   const { pending, done } = useMemo(() => {
     const pendingList: LeafRowData[] = [];
@@ -89,47 +129,26 @@ export function FlatView() {
     return { pending: pendingList, done: doneList };
   }, [nodes, roots, childrenOf]);
 
-  return (
-    <div className="absolute inset-0 overflow-y-auto">
-      <div className="max-w-3xl mx-auto py-4 px-3">
-        {/* 待处理组 */}
-        <h2 className="flex items-center gap-2 px-1 py-2 text-xs font-medium text-muted uppercase tracking-wider">
-          待处理
-          <span className="px-1.5 py-0.5 rounded-full bg-accent/15 text-accent text-[11px]">
-            {pending.length}
-          </span>
-        </h2>
-        {pending.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted/70 text-center">
-            {done.length > 0 ? '没有待处理的叶子节点，去树里看看吧' : '树还是空的，去创建第一个任务'}
-          </p>
-        ) : (
-          <div className="flex flex-col gap-0.5">
-            {pending.map(d => (
-              <LeafRow key={d.leaf.id} data={d} onReveal={id => void revealNode(id)} />
-            ))}
-          </div>
-        )}
+  const onReveal = (id: string) => void revealNode(id);
 
-        {/* 已完成组（默认折叠） */}
-        <button
-          onClick={() => setDoneOpen(v => !v)}
-          className="flex items-center gap-2 px-1 py-2 mt-6 text-xs font-medium text-muted uppercase tracking-wider w-full text-left hover:text-primary transition-colors"
-        >
-          {doneOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          已完成
-          <span className="px-1.5 py-0.5 rounded-full bg-success/15 text-success text-[11px] normal-case">
-            {done.length}
-          </span>
-        </button>
-        {doneOpen && (
-          <div className="flex flex-col gap-0.5">
-            {done.map(d => (
-              <LeafRow key={d.leaf.id} data={d} onReveal={id => void revealNode(id)} />
-            ))}
-          </div>
-        )}
-      </div>
+  return (
+    <div className="absolute inset-0 grid grid-cols-2 divide-x divide-border">
+      <FlatColumn
+        title="待处理"
+        count={pending.length}
+        tone="pending"
+        rows={pending}
+        empty={done.length > 0 ? '没有待处理的叶子节点，去树里看看吧' : '树还是空的，去创建第一个任务'}
+        onReveal={onReveal}
+      />
+      <FlatColumn
+        title="已完成"
+        count={done.length}
+        tone="done"
+        rows={done}
+        empty="还没有已完成的任务"
+        onReveal={onReveal}
+      />
     </div>
   );
 }

@@ -54,7 +54,11 @@ export function Sidebar() {
           return (
             <div
               key={d.id}
-              onClick={() => !active && void switchDocument(d.id)}
+              onClick={() => {
+                // 点击文档 = 打开它的树形视图：当前文档在回收站 / 平铺 / 统计页时也要切回来。
+                if (!active) void switchDocument(d.id);
+                else if (viewMode !== 'tree') setViewMode('tree');
+              }}
               onDoubleClick={() => {
                 setEditingId(d.id);
                 setDraftName(d.name);

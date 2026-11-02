@@ -22,6 +22,12 @@ import {
   treeSignature,
   type TodoNodeObj,
 } from './mindmapData';
+import {
+  applyViewport,
+  loadViewport,
+  readViewport,
+  saveViewport,
+} from './mindmapViewport';
 import { SearchBar } from './SearchBar';
 
 const THEME: Theme = {
@@ -427,12 +433,18 @@ export function MindMapView() {
   const lastSignatureRef = useRef('');
   const skipSyncRef = useRef(false);
   const selectedRef = useRef<string | null>(null);
+  /** 当前 mind 实例对应的文档 id（视口读写的归属方）。 */
+  const docIdRef = useRef<string | null>(null);
+  /** 文档切换时旧树根 id：新数据 refresh 后据此判断「可以按新布局精确恢复视口了」。 */
+  const restoreAfterRootRef = useRef<string | null>(null);
+  const viewportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const nodes = useTodoStore(s => s.nodes);
   const roots = useTodoStore(s => s.roots);
   const childrenOf = useTodoStore(s => s.childrenOf);
   const loaded = useTodoStore(s => s.loaded);
   const selectedId = useTodoStore(s => s.selectedId);
+  const currentDocId = useTodoStore(s => s.currentDocId);
   const flashId = useTodoStore(s => s.flashId);
   const revealTarget = useTodoStore(s => s.revealTarget);
   const createRequest = useTodoStore(s => s.createRequest);
@@ -450,6 +462,37 @@ export function MindMapView() {
     if (mind) void toggleNodeInMind(mind, id);
   }, []);
 
+  /** 立即把当前实例的视口写回所属文档（切文档 / 卸载 / 窗口关闭前调用）。 */
+  const flushViewport = useCallback(() => {
+    if (viewportTimerRef.current) {
+      clearTimeout(viewportTimerRef.current);
+      viewportTimerRef.current = null;
+    }
+    const mind = mindRef.current;
+    if (!mind) return;
+    saveViewport(docIdRef.current, readViewport(mind));
+  }, []);
+
+  /** 拖拽 / 缩放很密集，按 250ms 合并写入，避免 localStorage 写放大。 */
+  const scheduleViewportSave = useCallback(() => {
+    if (viewportTimerRef.current) clearTimeout(viewportTimerRef.current);
+    viewportTimerRef.current = setTimeout(() => {
+      viewportTimerRef.current = null;
+      flushViewport();
+    }, 250);
+  }, [flushViewport]);
+
+  // 关闭窗口时把最后一次视口落盘（防抖窗口内直接关窗也不会丢）。
+  useEffect(() => {
+    const onLeave = () => flushViewport();
+    window.addEventListener('pagehide', onLeave);
+    window.addEventListener('beforeunload', onLeave);
+    return () => {
+      window.removeEventListener('pagehide', onLeave);
+      window.removeEventListener('beforeunload', onLeave);
+    };
+  }, [flushViewport]);
+
   // 初始化：只创建一次 Mind Elixir 实例；后续数据变化由 sync effect 处理。
   useEffect(() => {
     if (!loaded || !containerRef.current || mindRef.current) return;
@@ -466,6 +509,7 @@ export function MindMapView() {
       scaleMax: 4,
     });
     mindRef.current = mind;
+    docIdRef.current = useTodoStore.getState().currentDocId;
     installMindBehavior(mind, skipSync, onToggle);
 
     mind.bus.addListener('selectNodes', list => {
@@ -474,6 +518,10 @@ export function MindMapView() {
     });
     mind.bus.addListener('scale', scale => {
       useTodoStore.getState().setZoomPercent(Math.round(scale * 100));
+      scheduleViewportSave();
+    });
+    mind.bus.addListener('move', () => {
+      scheduleViewportSave();
     });
     mind.bus.addListener('expandNode', node => {
       const st = useTodoStore.getState();
@@ -530,12 +578,13 @@ export function MindMapView() {
         useTodoStore.getState().showToast(err.message);
       } else {
         lastSignatureRef.current = treeSignature(nodes, roots);
-        mind.scaleFit();
-        useTodoStore.getState().setZoomPercent(Math.round(mind.scaleVal * 100));
+        // 恢复该文档上次的视口；没有记录（新文档 / 首次打开）则 100% + 根节点居中。
+        applyViewport(mind, loadViewport(docIdRef.current));
       }
     }
 
     return () => {
+      flushViewport();
       setMindMapControls(null);
       mind.destroy();
       mindRef.current = null;
@@ -543,6 +592,26 @@ export function MindMapView() {
     // 初始化依赖只在首次加载时读取；后续变化由下面的 sync effect 处理。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, skipSync, onToggle]);
+
+  // 切换文档：先把上一个文档的视口存回去，再恢复本文档自己的视口（两个文档互不影响）。
+  useEffect(() => {
+    const prev = docIdRef.current;
+    if (prev === currentDocId) return;
+    const mind = mindRef.current;
+    docIdRef.current = currentDocId;
+    if (!mind) return; // 非树形视图：等重新挂载时由初始化逻辑恢复
+    if (prev) saveViewport(prev, readViewport(mind));
+    const saved = loadViewport(currentDocId);
+    if (prev === null) {
+      // 启动竞态（文档索引晚于树数据到达）：此时画布就是当前文档的数据，直接应用。
+      applyViewport(mind, saved);
+      return;
+    }
+    // 有历史视口：绝对坐标与布局无关，立即应用可避免一闪。
+    // 没有历史视口（新文档）：必须等新数据 refresh 后按新布局居中，先记下当前渲染的根 id。
+    if (saved) applyViewport(mind, saved);
+    restoreAfterRootRef.current = mind.nodeData?.id ?? '';
+  }, [currentDocId]);
 
   // 一次 store 变更 → 结构变化就全量 refresh，否则只同步状态/内容。
   useEffect(() => {
@@ -563,6 +632,12 @@ export function MindMapView() {
       if (selected) {
         const tpc = findTopic(mind, selected);
         if (tpc) mind.selectNode(tpc);
+      }
+      // 文档切换后的首次 refresh：新树已完成布局，按该文档自己的视口精确定位一次。
+      const staleRoot = restoreAfterRootRef.current;
+      if (staleRoot !== null && (roots[0] ?? '') !== staleRoot) {
+        restoreAfterRootRef.current = null;
+        applyViewport(mind, loadViewport(docIdRef.current));
       }
     } else {
       syncNodeMetadata(mind, nodes, onToggle);
