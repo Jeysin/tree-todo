@@ -42,6 +42,7 @@ function toNodeObj(
   rootId: string,
   id: string,
   colors: MindColors,
+  hideDone: boolean,
 ): TodoNodeObj {
   const node = nodes[id];
   return {
@@ -50,23 +51,25 @@ function toNodeObj(
     expanded: !node.collapsed,
     metadata: { status: node.status, root: id === rootId },
     branchColor: node.status === 'done' ? colors.muted : colors.accent,
-    children: (childrenOf[id] ?? []).map(kid =>
-      toNodeObj(nodes, childrenOf, rootId, kid, colors),
-    ),
+    children: (childrenOf[id] ?? [])
+      // 「隐藏已完成」：整棵 done 子树都不参与渲染（父 done ⇒ 子孙必 done）
+      .filter(kid => !(hideDone && nodes[kid]?.status === 'done'))
+      .map(kid => toNodeObj(nodes, childrenOf, rootId, kid, colors, hideDone)),
   };
 }
 
-/** 单根模型：取第一个根作为 Mind Elixir 的 nodeData。 */
+/** 单根模型：取第一个根作为 Mind Elixir 的 nodeData；hideDone 时过滤已完成子树。 */
 export function buildMindElixirData(
   nodes: Record<string, TodoNode>,
   roots: string[],
   childrenOf: Record<string, string[]>,
   colors: MindColors = DEFAULT_MIND_COLORS,
+  hideDone = false,
 ): MindElixirData | null {
   const rootId = roots[0];
   if (!rootId || !nodes[rootId]) return null;
   return {
-    nodeData: toNodeObj(nodes, childrenOf, rootId, rootId, colors),
+    nodeData: toNodeObj(nodes, childrenOf, rootId, rootId, colors, hideDone),
   };
 }
 
@@ -79,7 +82,8 @@ export function nodeObjFromStore(
   colors: MindColors = DEFAULT_MIND_COLORS,
 ): TodoNodeObj | null {
   if (!nodes[id]) return null;
-  return toNodeObj(nodes, childrenOf, rootId, id, colors);
+  // 新节点永远是 pending，不存在需要过滤的已完成子孙。
+  return toNodeObj(nodes, childrenOf, rootId, id, colors, false);
 }
 
 export function statusOf(nodeObj: NodeObj | null | undefined): NodeStatus {
@@ -93,17 +97,22 @@ function metaOf(nodeObj: NodeObj): TodoMeta | undefined {
 
 /**
  * 结构签名：用于判断是否需要全量 refresh。
- * status 不参与签名——状态变化可以原地重绘，不必重建 DOM。
+ * status 默认不参与签名（状态变化可以原地重绘，不必重建 DOM）；
+ * 但开启「隐藏已完成」时，status 决定节点是否可见，必须纳入签名以触发重建。
  */
 export function treeSignature(
   nodes: Record<string, TodoNode>,
   roots: string[],
+  hideDone = false,
 ): string {
   const rootId = roots[0] ?? '';
   const parts = Object.values(nodes)
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map(n => `${n.id}|${n.parentId ?? ''}|${n.collapsed ? 1 : 0}|${n.content}`);
-  return `${rootId}\n${parts.join('\n')}`;
+    .map(
+      n =>
+        `${n.id}|${n.parentId ?? ''}|${n.collapsed ? 1 : 0}|${hideDone ? n.status : ''}|${n.content}`,
+    );
+  return `${hideDone ? 'H' : 'V'}|${rootId}\n${parts.join('\n')}`;
 }
 
 function targetSiblingPosition(

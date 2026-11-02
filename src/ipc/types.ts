@@ -51,16 +51,47 @@ export interface TrashDoc {
   deletedAt: string;
 }
 
-/** 文档元数据（v0.3 多文档）。 */
+/** 回收站列表项（v0.6：文档与整个目录混合展示）。 */
+export interface TrashItem {
+  id: string;
+  kind: 'doc' | 'folder';
+  name: string;
+  createdAt: string;
+  deletedAt: string;
+  /** 目录条目携带的文档数；文档条目为 1。 */
+  documentCount: number;
+  /** 目录条目的子目录数（不含自身）；文档条目为 0。 */
+  folderCount: number;
+}
+
+/** 文档元数据（v0.3 多文档；v0.5 起支持目录层级）。 */
 export interface DocMeta {
   id: string;
   name: string;
+  /** 所属目录 id；null 表示位于根层级。 */
+  folderId: string | null;
+  createdAt: string;
+}
+
+/** 目录元数据（v0.5）：可嵌套，只存在于 documents.json 索引里。 */
+export interface FolderMeta {
+  id: string;
+  name: string;
+  parentId: string | null;
   createdAt: string;
 }
 
 /** 文档索引（documents.json）。 */
 export interface DocIndex {
   documents: DocMeta[];
+  folders: FolderMeta[];
   lastOpened: string | null;
   trash: TrashDoc[];
+}
+
+/** 导入结果（v0.5：整体还原为新的文档 / 目录）。 */
+export interface ImportResult {
+  documentIds: string[];
+  folderIds: string[];
+  firstDocumentId: string | null;
 }

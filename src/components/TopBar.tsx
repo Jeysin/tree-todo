@@ -4,14 +4,14 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Download,
+  Eye,
+  EyeOff,
+  Keyboard,
   Monitor,
   Moon,
   MoreHorizontal,
-  Plus,
-  Save,
   Search,
   Sun,
-  Upload,
 } from 'lucide-react';
 
 import { useTodoStore, type Theme } from '../stores/todoStore';
@@ -22,32 +22,86 @@ const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Sun }[] = [
   { value: 'dark', label: '深色', icon: Moon },
 ];
 
-/** 顶栏（docs/04 §2）：视图切换 + 树形工具栏 + 更多菜单（导入导出 / 备份 / 主题）。 */
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** 常用快捷键（docs/04 §5）。macOS 用 ⌘ / ⇧ 展示。 */
+const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string }[] }[] = [
+  {
+    title: '新建与编辑',
+    items: [
+      { keys: ['N'], label: '在根任务下新建' },
+      { keys: ['Tab'], label: '新建子任务' },
+      { keys: ['Enter'], label: '新建同级任务' },
+      { keys: ['F2'], label: '编辑节点' },
+      { keys: ['Esc'], label: '取消编辑 / 关闭搜索' },
+    ],
+  },
+  {
+    title: '状态',
+    items: [
+      { keys: ['S'], label: '完成 / 取消完成' },
+      { keys: ['Delete'], label: '删除节点' },
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', 'Z'], label: '撤销' },
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', '⇧', 'Z'], label: '重做' },
+    ],
+  },
+  {
+    title: '视图',
+    items: [
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', '1'], label: '树形视图' },
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', '2'], label: '平铺视图' },
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', '3'], label: '统计视图' },
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', 'F'], label: '搜索' },
+      { keys: ['⇧', '1'], label: '适应视图' },
+      { keys: ['Space', '拖拽'], label: '平移画布' },
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', '. / ,'], label: '折叠 / 展开' },
+    ],
+  },
+];
+
+/** 顶栏（docs/04 §2）：视图切换 + 文件菜单 + 更多菜单 + 快捷键教程。 */
 export function TopBar() {
   const viewMode = useTodoStore(s => s.viewMode);
   const setViewMode = useTodoStore(s => s.setViewMode);
-  const roots = useTodoStore(s => s.roots);
-  const requestCreate = useTodoStore(s => s.requestCreate);
-  const loaded = useTodoStore(s => s.loaded);
+  const documents = useTodoStore(s => s.documents);
+  const currentDocId = useTodoStore(s => s.currentDocId);
+  const exportDocument = useTodoStore(s => s.exportDocument);
   const collapseAll = useTodoStore(s => s.collapseAll);
   const setSearchOpen = useTodoStore(s => s.setSearchOpen);
-  const exportData = useTodoStore(s => s.exportData);
-  const importData = useTodoStore(s => s.importData);
-  const backupNow = useTodoStore(s => s.backupNow);
   const theme = useTodoStore(s => s.theme);
   const setTheme = useTodoStore(s => s.setTheme);
+  const hideDone = useTodoStore(s => s.hideDone);
+  const setHideDone = useTodoStore(s => s.setHideDone);
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const helpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!moreOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      if (moreRef.current?.contains(e.target as Node)) return;
+      setMoreOpen(false);
     };
     window.addEventListener('mousedown', onDown);
     return () => window.removeEventListener('mousedown', onDown);
-  }, [menuOpen]);
+  }, [moreOpen]);
+
+  useEffect(() => () => {
+    if (helpTimer.current) clearTimeout(helpTimer.current);
+  }, []);
+
+  const openHelp = () => {
+    if (helpTimer.current) clearTimeout(helpTimer.current);
+    setHelpOpen(true);
+  };
+  const scheduleCloseHelp = () => {
+    if (helpTimer.current) clearTimeout(helpTimer.current);
+    helpTimer.current = setTimeout(() => setHelpOpen(false), 120);
+  };
+
+  const currentDoc = documents.find(d => d.id === currentDocId) ?? null;
 
   const tab = (active: boolean) =>
     [
@@ -62,7 +116,7 @@ export function TopBar() {
     'w-full flex items-center gap-2 px-3 h-8 text-[13px] text-primary hover:bg-base transition-colors';
 
   return (
-    <header className="flex items-center gap-4 h-12 px-4 border-b border-border bg-surface shrink-0">
+    <header className="relative z-30 flex items-center gap-3 h-12 px-4 border-b border-border bg-surface shrink-0">
       <nav className="flex items-center gap-0.5 p-0.5 rounded-lg bg-base border border-border">
         <button className={tab(viewMode === 'tree')} onClick={() => setViewMode('tree')} title="树形视图 (Ctrl+1)">
           树形
@@ -88,26 +142,38 @@ export function TopBar() {
           <button className={iconBtn} onClick={() => void collapseAll(false)} title="展开全部">
             <ChevronsUpDown className="w-4 h-4" />
           </button>
+          <button
+            onClick={() => setHideDone(!hideDone)}
+            aria-pressed={hideDone}
+            title="隐藏已完成节点"
+            className={[
+              'w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
+              hideDone
+                ? 'text-accent bg-accent/12'
+                : 'text-muted hover:text-primary hover:bg-base',
+            ].join(' ')}
+          >
+            {hideDone ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
         </>
       )}
 
-      <div className="relative" ref={menuRef}>
-        <button className={iconBtn} onClick={() => setMenuOpen(v => !v)} title="更多">
+      {/* 全局导出 / 导入在系统菜单栏的 File 菜单里（见 src-tauri/src/lib.rs） */}
+      <div className="relative" ref={moreRef}>
+        <button
+          className={iconBtn}
+          onClick={() => setMoreOpen(v => !v)}
+          title="更多"
+        >
           <MoreHorizontal className="w-4 h-4" />
         </button>
-        {menuOpen && (
-          <div className="absolute right-0 top-9 z-40 w-48 rounded-lg border border-border bg-elevated shadow-xl py-1">
+        {moreOpen && (
+          <div className="absolute right-0 top-9 z-40 w-52 rounded-lg border border-border bg-elevated shadow-xl py-1">
             <div className="px-3 pt-1 pb-1.5 text-[11px] text-muted select-none">主题</div>
             {THEME_OPTIONS.map(opt => {
               const Icon = opt.icon;
               return (
-                <button
-                  key={opt.value}
-                  onClick={() => {
-                    setTheme(opt.value);
-                  }}
-                  className={menuItem}
-                >
+                <button key={opt.value} onClick={() => setTheme(opt.value)} className={menuItem}>
                   <Icon className="w-3.5 h-3.5 text-muted" />
                   {opt.label}
                   {theme === opt.value && <Check className="w-3.5 h-3.5 ml-auto text-accent" />}
@@ -117,53 +183,67 @@ export function TopBar() {
             <div className="my-1 border-t border-border" />
             <button
               onClick={() => {
-                setMenuOpen(false);
-                void exportData();
+                setMoreOpen(false);
+                if (currentDoc) void exportDocument(currentDoc.id, currentDoc.name);
               }}
-              className={menuItem}
+              disabled={!currentDoc}
+              className={menuItem + ' disabled:opacity-40'}
             >
               <Download className="w-3.5 h-3.5 text-muted" />
-              导出数据（JSON）
-            </button>
-            <button
-              onClick={() => {
-                setMenuOpen(false);
-                void importData();
-              }}
-              className={menuItem}
-            >
-              <Upload className="w-3.5 h-3.5 text-muted" />
-              导入数据（追加）
-            </button>
-            <button
-              onClick={() => {
-                setMenuOpen(false);
-                void backupNow();
-              }}
-              className={menuItem}
-            >
-              <Save className="w-3.5 h-3.5 text-muted" />
-              立即备份
+              导出
             </button>
           </div>
         )}
       </div>
 
-      {(viewMode === 'tree' || viewMode === 'flat') && (
+      {viewMode === 'tree' && (
         <button
-          onClick={() => {
-            const rootId = roots[0];
-            if (!rootId) return;
-            if (viewMode !== 'tree') setViewMode('tree');
-            requestCreate(rootId);
-          }}
-          disabled={!loaded || !roots[0]}
-          className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-accent text-white text-[13px] font-medium shadow-sm hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-40"
-          title="在根任务下新建任务"
+          onMouseEnter={openHelp}
+          onMouseLeave={scheduleCloseHelp}
+          onFocus={openHelp}
+          onBlur={scheduleCloseHelp}
+          className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-border text-[13px] text-muted hover:text-primary hover:bg-base transition-colors"
+          title="常用快捷键"
+          aria-label="常用快捷键"
         >
-          <Plus className="w-4 h-4" />
-          新建任务
+          <Keyboard className="w-4 h-4" />
+          快捷键
         </button>
+      )}
+
+      {viewMode === 'tree' && helpOpen && (
+        <div
+          onMouseEnter={openHelp}
+          onMouseLeave={scheduleCloseHelp}
+          className="absolute right-4 top-[52px] z-40 w-[272px] max-h-[calc(100vh-72px)] overflow-y-auto rounded-xl border border-border/70 bg-elevated/85 backdrop-blur-xl shadow-2xl p-3"
+        >
+          <div className="px-1 pb-1 text-[11px] font-medium text-muted uppercase tracking-wider select-none">
+            常用快捷键
+          </div>
+          {SHORTCUT_GROUPS.map(group => (
+            <section key={group.title} className="pt-2">
+              <h3 className="px-1 pb-1 text-[11px] text-muted/80 select-none">{group.title}</h3>
+              {group.items.map(item => (
+                <div
+                  key={item.label}
+                  className="flex items-center justify-between gap-3 h-7 px-1 text-[12px] text-primary"
+                >
+                  <span className="truncate">{item.label}</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {item.keys.map(k => (
+                      <kbd
+                        key={k}
+                        className="inline-flex items-center justify-center h-5 min-w-5 px-1 rounded border border-border bg-base text-[11px] font-medium text-muted"
+                      >
+                        {k}
+                      </kbd>
+                    ))}
+                  </span>
+                </div>
+              ))}
+            </section>
+          ))}
+        </div>
       )}
     </header>
   );

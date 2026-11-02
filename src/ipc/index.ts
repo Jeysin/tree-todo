@@ -9,8 +9,10 @@ import type {
   CreateResult,
   DocIndex,
   DocMeta,
+  FolderMeta,
+  ImportResult,
   TodoNode,
-  TrashDoc,
+  TrashItem,
 } from './types';
 
 export const ipc = {
@@ -57,25 +59,42 @@ export const ipc = {
   undo: (): Promise<Affected | null> => invoke('undo'),
   redo: (): Promise<Affected | null> => invoke('redo'),
 
-  /** 导出全量数据到指定路径。 */
-  exportJson: (path: string): Promise<void> => invoke('export_json', { path }),
+  // ── 导出 / 导入（v0.5：以文档 / 目录 / 全部为单位，导入即整体还原）──
+  /** 导出单个文档到指定路径。 */
+  exportDocument: (id: string, path: string): Promise<void> =>
+    invoke('export_document', { id, path }),
+  /** 导出整个目录（含子目录与其中所有文档）。 */
+  exportFolder: (id: string, path: string): Promise<void> => invoke('export_folder', { id, path }),
+  /** 导出全部文档与目录。 */
+  exportAll: (path: string): Promise<void> => invoke('export_all', { path }),
+  /** 导入导出包，整体还原为新的文档 / 目录；folderId 指定落在哪个目录下。 */
+  importBundle: (path: string, folderId: string | null): Promise<ImportResult> =>
+    invoke('import_bundle', { path, folderId }),
 
-  /** 从指定路径导入（追加 + id 重映射 + 状态校正）。 */
-  importJson: (path: string): Promise<Affected> => invoke('import_json', { path }),
-
-  // ── 回收站（v0.4：回收文档）──
-  listTrash: (): Promise<TrashDoc[]> => invoke('list_trash'),
+  // ── 回收站（v0.6：文档或整个目录）──
+  listTrash: (): Promise<TrashItem[]> => invoke('list_trash'),
   restoreTrash: (id: string): Promise<DocIndex> => invoke('restore_trash', { id }),
   purgeTrash: (id: string): Promise<DocIndex> => invoke('purge_trash', { id }),
   emptyTrash: (): Promise<DocIndex> => invoke('empty_trash'),
 
-  // ── 多文档（v0.3）──
+  // ── 多文档 / 目录（v0.3 / v0.5）──
   listDocuments: (): Promise<DocIndex> => invoke('list_documents'),
-  createDocument: (name: string): Promise<DocMeta> => invoke('create_document', { name }),
+  createDocument: (name: string, folderId: string | null): Promise<DocMeta> =>
+    invoke('create_document', { name, folderId }),
   renameDocument: (id: string, name: string): Promise<DocMeta> =>
     invoke('rename_document', { id, name }),
   deleteDocument: (id: string): Promise<DocIndex> => invoke('delete_document', { id }),
+  createFolder: (name: string, parentId: string | null): Promise<FolderMeta> =>
+    invoke('create_folder', { name, parentId }),
+  renameFolder: (id: string, name: string): Promise<FolderMeta> =>
+    invoke('rename_folder', { id, name }),
+  /** 把文档移动到目录（folderId = null 表示根层级）。 */
+  moveDocument: (id: string, folderId: string | null): Promise<DocMeta> =>
+    invoke('move_document', { id, folderId }),
+  /** 把目录移动到另一个目录（parentId = null 表示根层级）；禁止移进自身子树。 */
+  moveFolder: (id: string, parentId: string | null): Promise<FolderMeta> =>
+    invoke('move_folder', { id, parentId }),
+  deleteFolder: (id: string): Promise<DocIndex> => invoke('delete_folder', { id }),
   switchDocument: (id: string): Promise<void> => invoke('switch_document', { id }),
   getCurrentDocument: (): Promise<DocMeta> => invoke('get_current_document'),
-  backupNow: (): Promise<void> => invoke('backup_now'),
 };

@@ -173,23 +173,50 @@ stateDiagram-v2
 |---|---|---|
 | Schema 迁移 | 启动时 | 读 `schema_version`，逐版本执行迁移脚本（v0.1 → 1，预留迁移框架） |
 | position 重排 | 写操作后惰性触发 | 同级 `position` 差值小于阈值（如 1e-6）时，对该组一次性重排（步长 1024） |
-| 数据库备份 | 每日启动 + 关闭时 | 复制 db 文件为 `tree-todo.db.bak`（保留最近 3 份），v0.1 先实现为启动时单份备份 |
+| 数据备份 | — | v0.5 起**移除自动备份**：备份统一走 §5 的导出 / 导入（用户主动、可异地保存） |
 
-## 5. 导入 / 导出（v0.2，格式先行约定）
+## 5. 导入 / 导出（v0.5：以文档 / 目录 / 全部为单位）
 
-导出为人类可读的 JSON（同时是备份格式）：
+导出为人类可读的 JSON。**导入与导出互逆**：导出的是整个文档或整个目录，导入就还原成新的文档 / 目录；
+不再提供「追加到现有文档」的导入。应用内不再做自动备份，导出即备份手段。
 
 ```json
 {
-  "format": "tree-todo.export",
-  "version": 1,
-  "exported_at": "2026-11-01T12:00:00Z",
-  "nodes": [
-    { "id": "…", "parent_id": null, "content": "产品 A", "status": "pending",
-      "position": 1024.0, "collapsed": false,
-      "created_at": "…", "updated_at": "…", "children": [ /* 嵌套或由 parent_id 表达，采用 parent_id 扁平表达 */ ] }
-  ]
+  "format": "tree-todo.bundle",
+  "version": 2,
+  "exported_at": "2026-11-02T12:00:00Z",
+  "kind": "document",
+  "document": { "name": "我的任务", "nodes": [ /* ImportNode[] */ ] },
+  "folder":   { "name": "工作", "folders": [ /* BundleFolder */ ], "documents": [ /* BundleDocument */ ] },
+  "folders":   [ /* kind = all 时的根级目录 */ ],
+  "documents": [ /* kind = all 时的根级文档 */ ]
 }
 ```
 
-导入时**不信任**文件中的 status 一致性：导入后强制跑一次全树传播校正，违反 I2 的数据以子节点聚合结果为准。
+- `kind`：`document` / `folder` / `all`，三者只使用对应字段；节点沿用 v1 的扁平 `parent_id` 结构（snake_case）。
+- 文档节点结构（与 v1 兼容）：`{ id, parent_id, content, note, status, position, collapsed, created_at, updated_at, completed_at }`。
+
+导入规则：
+
+1. 每个导入的文档都写入**新的独立 SQLite 文件**，节点 id 直接沿用文件中的值（跨文档不存在冲突）；
+2. 统一做**单根归一**：无根 / 多根时补一个「任务线」根，悬空父引用与环一律挂到根；
+3. **不信任**文件中的 status 一致性：导入后强制跑一次全树传播校正，违反 I2 的数据以子节点聚合结果为准；
+4. 兼容旧版 v1 单文档文件（`format: "tree-todo.export"`, `version: 1`），按「一个文档」导入并用文件名命名。
+
+## 6. 文档与目录索引（documents.json）
+
+```json
+{
+  "documents": [{ "id": "…", "name": "我的任务", "folderId": null, "createdAt": "…" }],
+  "folders":   [{ "id": "…", "name": "工作", "parentId": null, "createdAt": "…" }],
+  "lastOpened": "…",
+  "trash": [{ "id": "…", "name": "…", "createdAt": "…", "deletedAt": "…" }],
+  "trashFolders": [{ "id": "…", "name": "工作", "deletedAt": "…", "folders": [], "documents": [] }]
+}
+```
+
+- 目录只存在于索引里（可任意嵌套），文档数据仍在 `docs/{id}.db`；
+- **删除目录 = 整个目录进回收站**：`trashFolders` 里保存该目录子树的全部 `FolderMeta` 与 `DocMeta`（含原始 id 与父子关系），文档文件移入 `trash/`；
+- **恢复目录**：按快照重建目录结构与文档归属，文件移回 `docs/`；若原父目录已不存在则回到根层级；
+- 至少保留一个活动文档，删除目录若会导致没有文档则拒绝（`LastDocument`）。
+

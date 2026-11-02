@@ -9,7 +9,7 @@ import { create } from 'zustand';
 import { confirm, open, save } from '@tauri-apps/plugin-dialog';
 
 import { ipc } from '../ipc';
-import type { Affected, AppError, DocMeta, TodoNode, TrashDoc } from '../ipc/types';
+import type { Affected, AppError, DocMeta, FolderMeta, TodoNode, TrashItem } from '../ipc/types';
 
 export type ViewMode = 'tree' | 'flat' | 'stats' | 'trash';
 export type Theme = 'system' | 'light' | 'dark';
@@ -35,6 +35,7 @@ export interface CreateRequest {
 }
 
 const THEME_KEY = 'tree-todo.theme';
+const HIDE_DONE_PREFIX = 'tree-todo.hideDone.';
 
 function applyTheme(t: Theme) {
   const root = document.documentElement;
@@ -52,6 +53,31 @@ function initialTheme(): Theme {
   return 'system';
 }
 
+/** 「隐藏已完成」按文档记忆：切换文档 / 重启后各自保持。 */
+function readHideDone(docId: string | null): boolean {
+  if (!docId) return false;
+  try {
+    return localStorage.getItem(HIDE_DONE_PREFIX + docId) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeHideDone(docId: string | null, value: boolean): void {
+  if (!docId) return;
+  try {
+    localStorage.setItem(HIDE_DONE_PREFIX + docId, value ? '1' : '0');
+  } catch {
+    /* 忽略持久化失败 */
+  }
+}
+
+/** 导出文件名里去掉路径非法字符。 */
+function fileSafeName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|]/g, '_').trim();
+  return cleaned || '未命名';
+}
+
 interface TodoState {
   // ── 数据快照 ──
   nodes: Record<string, TodoNode>;
@@ -61,12 +87,13 @@ interface TodoState {
   childrenOf: Record<string, string[]>;
   loaded: boolean;
 
-  // ── 多文档（v0.3）──
+  // ── 多文档 / 目录（v0.3 / v0.5）──
   documents: DocMeta[];
+  folders: FolderMeta[];
   currentDocId: string | null;
 
   // ── 回收站（v0.4：回收文档）──
-  trash: TrashDoc[];
+  trash: TrashItem[];
 
   // ── 视图状态 ──
   viewMode: ViewMode;
@@ -78,6 +105,8 @@ interface TodoState {
   createRequest: CreateRequest | null;
   /** Mind Elixir 当前缩放百分比。 */
   zoomPercent: number;
+  /** 树形视图「隐藏已完成」开关（按文档持久化）。 */
+  hideDone: boolean;
   toast: Toast | null;
   /** 搜索浮层开关（TopBar 搜索按钮 / Ctrl+F 触发）。 */
   searchOpen: boolean;
@@ -90,15 +119,22 @@ interface TodoState {
   revealNode: (id: string) => Promise<void>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
-  exportData: () => Promise<void>;
-  importData: () => Promise<void>;
-  backupNow: () => Promise<void>;
-  // 文档
+  // 导入导出（v0.5：文档 / 目录 / 全部）
+  exportDocument: (id: string, name: string) => Promise<void>;
+  exportFolder: (id: string, name: string) => Promise<void>;
+  exportAll: () => Promise<void>;
+  importBundle: (folderId?: string | null) => Promise<void>;
+  // 文档 / 目录
   loadDocuments: () => Promise<void>;
   switchDocument: (id: string) => Promise<void>;
-  createDocument: (name: string) => Promise<void>;
+  createDocument: (name: string, folderId?: string | null) => Promise<string | null>;
   renameDocument: (id: string, name: string) => Promise<void>;
   deleteDocument: (id: string) => Promise<void>;
+  createFolder: (name: string, parentId: string | null) => Promise<FolderMeta | null>;
+  renameFolder: (id: string, name: string) => Promise<void>;
+  moveDocument: (id: string, folderId: string | null) => Promise<void>;
+  moveFolder: (id: string, parentId: string | null) => Promise<void>;
+  deleteFolder: (id: string) => Promise<void>;
   // 回收站
   loadTrash: () => Promise<void>;
   restoreTrash: (id: string) => Promise<void>;
@@ -109,6 +145,7 @@ interface TodoState {
   setViewMode: (m: ViewMode) => void;
   setTheme: (t: Theme) => void;
   setSearchOpen: (open: boolean) => void;
+  setHideDone: (value: boolean) => void;
   requestCreate: (parentId: string | null, position?: number | null) => void;
   clearCreateRequest: () => void;
   setZoomPercent: (percent: number) => void;
@@ -150,6 +187,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   loaded: false,
 
   documents: [],
+  folders: [],
   currentDocId: null,
 
   trash: [],
@@ -161,6 +199,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   revealTarget: null,
   createRequest: null,
   zoomPercent: 100,
+  hideDone: false,
   toast: null,
   searchOpen: false,
 
@@ -219,6 +258,11 @@ export const useTodoStore = create<TodoState>((set, get) => ({
         console.error('expandNodes failed:', e);
       }
     }
+    // 目标已完成且开着「隐藏已完成」：关掉开关再定位，否则点了也看不到。
+    if (get().hideDone && nodes[id]?.status === 'done') {
+      get().setHideDone(false);
+      get().showToast('已关闭「隐藏已完成」以定位该节点');
+    }
     set({
       viewMode: 'tree',
       selectedId: id,
@@ -257,48 +301,83 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
   },
 
-  async exportData() {
+  async exportDocument(id, name) {
     try {
-      const d = new Date();
-      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
       const path = await save({
-        title: '导出 tree-todo 数据',
-        defaultPath: `tree-todo-${stamp}.json`,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
+        title: '导出文档',
+        defaultPath: `${fileSafeName(name)}.json`,
+        filters: [{ name: 'tree-todo 导出', extensions: ['json'] }],
       });
       if (!path) return;
-      await ipc.exportJson(path);
-      get().showToast('数据已导出');
+      await ipc.exportDocument(id, path);
+      get().showToast(`已导出文档「${name}」`);
     } catch (e) {
-      console.error('export failed:', e);
+      console.error('exportDocument failed:', e);
       get().showToast(errMsg(e, '导出失败'));
     }
   },
 
-  async importData() {
+  async exportFolder(id, name) {
     try {
-      const path = await open({
-        title: '导入 tree-todo 数据（追加到当前文档）',
-        multiple: false,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
+      const path = await save({
+        title: '导出目录（含子目录与全部文档）',
+        defaultPath: `${fileSafeName(name)}-目录.json`,
+        filters: [{ name: 'tree-todo 导出', extensions: ['json'] }],
       });
-      if (!path || Array.isArray(path)) return;
-      const af = await ipc.importJson(path);
-      get().applyAffected(af);
-      get().showToast(`导入完成（${af.upserted.length} 个节点，可 Ctrl+Z 撤销）`);
+      if (!path) return;
+      await ipc.exportFolder(id, path);
+      get().showToast(`已导出目录「${name}」`);
     } catch (e) {
-      console.error('import failed:', e);
-      get().showToast(errMsg(e, '导入失败'));
+      console.error('exportFolder failed:', e);
+      get().showToast(errMsg(e, '导出失败'));
     }
   },
 
-  async backupNow() {
+  async exportAll() {
     try {
-      await ipc.backupNow();
-      get().showToast('已备份当前文档（保留最近 3 份）');
+      const d = new Date();
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      const path = await save({
+        title: '导出全部文档与目录',
+        defaultPath: `tree-todo-全部-${stamp}.json`,
+        filters: [{ name: 'tree-todo 导出', extensions: ['json'] }],
+      });
+      if (!path) return;
+      await ipc.exportAll(path);
+      get().showToast('已导出全部文档与目录');
     } catch (e) {
-      console.error('backup failed:', e);
-      get().showToast(errMsg(e, '备份失败'));
+      console.error('exportAll failed:', e);
+      get().showToast(errMsg(e, '导出失败'));
+    }
+  },
+
+  async importBundle(folderId = null) {
+    try {
+      const path = await open({
+        title: '导入 tree-todo 导出文件（整体还原为文档或目录）',
+        multiple: false,
+        filters: [{ name: 'tree-todo 导出', extensions: ['json'] }],
+      });
+      if (!path || Array.isArray(path)) return;
+      const result = await ipc.importBundle(path, folderId);
+      if (result.documentIds.length === 0 && result.folderIds.length === 0) {
+        get().showToast('文件里没有可导入的内容');
+        return;
+      }
+      await get().loadDocuments();
+      if (result.firstDocumentId) {
+        await get().switchDocument(result.firstDocumentId);
+        get().showToast(
+          result.documentIds.length > 1
+            ? `已导入 ${result.documentIds.length} 个文档，已打开「${get().documents.find(d => d.id === result.firstDocumentId)?.name ?? ''}」`
+            : '已导入并打开文档',
+        );
+      } else {
+        get().showToast('已导入目录');
+      }
+    } catch (e) {
+      console.error('importBundle failed:', e);
+      get().showToast(errMsg(e, '导入失败'));
     }
   },
 
@@ -306,10 +385,12 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   async loadDocuments() {
     try {
       const idx = await ipc.listDocuments();
+      const nextDoc = idx.lastOpened ?? idx.documents[0]?.id ?? null;
       set({
         documents: idx.documents,
-        trash: idx.trash,
-        currentDocId: idx.lastOpened ?? idx.documents[0]?.id ?? null,
+        folders: idx.folders ?? [],
+        currentDocId: nextDoc,
+        hideDone: readHideDone(nextDoc),
       });
     } catch (e) {
       console.error('loadDocuments failed:', e);
@@ -320,7 +401,13 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     if (get().currentDocId === id) return;
     try {
       await ipc.switchDocument(id);
-      set({ currentDocId: id, selectedId: null, flashId: null, viewMode: 'tree' });
+      set({
+        currentDocId: id,
+        selectedId: null,
+        flashId: null,
+        viewMode: 'tree',
+        hideDone: readHideDone(id),
+      });
       await get().loadTree();
       await get().loadDocuments();
     } catch (e) {
@@ -329,14 +416,85 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
   },
 
-  async createDocument(name) {
+  async createDocument(name, folderId = null) {
     try {
-      const meta = await ipc.createDocument(name);
+      const meta = await ipc.createDocument(name, folderId);
       await get().loadDocuments();
       await get().switchDocument(meta.id);
+      return meta.id;
     } catch (e) {
       console.error('createDocument failed:', e);
       get().showToast(errMsg(e, '新建文档失败'));
+      return null;
+    }
+  },
+
+  async createFolder(name, parentId) {
+    try {
+      const meta = await ipc.createFolder(name, parentId);
+      await get().loadDocuments();
+      return meta;
+    } catch (e) {
+      console.error('createFolder failed:', e);
+      get().showToast(errMsg(e, '新建目录失败'));
+      return null;
+    }
+  },
+
+  async renameFolder(id, name) {
+    try {
+      await ipc.renameFolder(id, name);
+      await get().loadDocuments();
+    } catch (e) {
+      console.error('renameFolder failed:', e);
+      get().showToast(errMsg(e, '重命名失败'));
+    }
+  },
+
+  async moveDocument(id, folderId) {
+    try {
+      await ipc.moveDocument(id, folderId);
+      await get().loadDocuments();
+      get().showToast('已移动文档');
+    } catch (e) {
+      console.error('moveDocument failed:', e);
+      get().showToast(errMsg(e, '移动失败'));
+    }
+  },
+
+  async moveFolder(id, parentId) {
+    try {
+      await ipc.moveFolder(id, parentId);
+      await get().loadDocuments();
+      get().showToast('已移动目录');
+    } catch (e) {
+      console.error('moveFolder failed:', e);
+      get().showToast(errMsg(e, '移动失败'));
+    }
+  },
+
+  async deleteFolder(id) {
+    try {
+      const folder = get().folders.find(f => f.id === id);
+      const idx = await ipc.deleteFolder(id);
+      const cur = get().currentDocId;
+      const next = idx.documents.some(d => d.id === cur)
+        ? cur
+        : (idx.lastOpened ?? idx.documents[0]?.id ?? null);
+      set({
+        documents: idx.documents,
+        folders: idx.folders ?? [],
+        currentDocId: next,
+        selectedId: null,
+        flashId: null,
+        hideDone: readHideDone(next),
+      });
+      await get().loadTree();
+      await get().loadTrash();
+      get().showToast(`已删除目录${folder ? `「${folder.name}」` : ''}，可从回收站整体恢复`);
+    } catch (e) {
+      console.error('deleteFolder failed:', e);
+      get().showToast(errMsg(e, '删除目录失败'));
     }
   },
 
@@ -352,33 +510,25 @@ export const useTodoStore = create<TodoState>((set, get) => ({
 
   async deleteDocument(id) {
     try {
-      const doc = get().documents.find(d => d.id === id);
-      const ok = await confirm(
-        `将文档「${doc?.name ?? id}」移入回收站？\n\n文档数据会保留，可从回收站恢复。`,
-        {
-          title: '删除文档',
-          kind: 'warning',
-          okLabel: '移入回收站',
-          cancelLabel: '取消',
-        },
-      );
-      if (!ok) return;
       const idx = await ipc.deleteDocument(id);
+      const next = idx.lastOpened ?? idx.documents[0]?.id ?? null;
       set({
         documents: idx.documents,
-        trash: idx.trash,
-        currentDocId: idx.lastOpened ?? idx.documents[0]?.id ?? null,
+        folders: idx.folders ?? [],
+        currentDocId: next,
         selectedId: null,
         flashId: null,
+        hideDone: readHideDone(next),
       });
       await get().loadTree();
+      await get().loadTrash();
     } catch (e) {
       console.error('deleteDocument failed:', e);
       get().showToast(errMsg(e, '删除文档失败'));
     }
   },
 
-  // ── 回收站 ──
+  // ── 回收站（v0.6：文档或整个目录）──
   async loadTrash() {
     try {
       set({ trash: await ipc.listTrash() });
@@ -390,8 +540,9 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   async restoreTrash(id) {
     try {
       const idx = await ipc.restoreTrash(id);
-      set({ documents: idx.documents, trash: idx.trash });
-      get().showToast('文档已恢复');
+      set({ documents: idx.documents, folders: idx.folders ?? [] });
+      await get().loadTrash();
+      get().showToast('已恢复');
     } catch (e) {
       console.error('restoreTrash failed:', e);
       get().showToast(errMsg(e, '恢复失败'));
@@ -401,8 +552,9 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   async purgeTrash(id) {
     try {
       const idx = await ipc.purgeTrash(id);
-      set({ documents: idx.documents, trash: idx.trash });
-      get().showToast('文档已彻底删除');
+      set({ documents: idx.documents, folders: idx.folders ?? [] });
+      await get().loadTrash();
+      get().showToast('已彻底删除');
     } catch (e) {
       console.error('purgeTrash failed:', e);
       get().showToast(errMsg(e, '彻底删除失败'));
@@ -411,7 +563,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
 
   async emptyTrash() {
     try {
-      const ok = await confirm('清空回收站？回收站内所有文档将被永久删除，不可恢复。', {
+      const ok = await confirm('清空回收站？回收站内的文档与目录将被永久删除，不可恢复。', {
         title: '清空回收站',
         kind: 'warning',
         okLabel: '清空',
@@ -419,7 +571,8 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       });
       if (!ok) return;
       const idx = await ipc.emptyTrash();
-      set({ documents: idx.documents, trash: idx.trash });
+      set({ documents: idx.documents, folders: idx.folders ?? [] });
+      await get().loadTrash();
       get().showToast('回收站已清空');
     } catch (e) {
       console.error('emptyTrash failed:', e);
@@ -445,6 +598,10 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   },
   setSearchOpen(open) {
     set({ searchOpen: open });
+  },
+  setHideDone(value) {
+    writeHideDone(get().currentDocId, value);
+    set({ hideDone: value });
   },
   requestCreate(parentId, position = null) {
     set({ createRequest: { parentId, position, token: Date.now() } });

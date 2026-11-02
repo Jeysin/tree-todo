@@ -450,6 +450,7 @@ export function MindMapView() {
   const createRequest = useTodoStore(s => s.createRequest);
   const searchOpen = useTodoStore(s => s.searchOpen);
   const theme = useTodoStore(s => s.theme);
+  const hideDone = useTodoStore(s => s.hideDone);
 
   selectedRef.current = selectedId;
 
@@ -571,13 +572,13 @@ export function MindMapView() {
       fit: () => mind.scaleFit(),
     });
 
-    const data = buildMindElixirData(nodes, roots, childrenOf, readMindColors());
+    const data = buildMindElixirData(nodes, roots, childrenOf, readMindColors(), hideDone);
     if (data) {
       const err = mind.init(data);
       if (err) {
         useTodoStore.getState().showToast(err.message);
       } else {
-        lastSignatureRef.current = treeSignature(nodes, roots);
+        lastSignatureRef.current = treeSignature(nodes, roots, hideDone);
         // 恢复该文档上次的视口；没有记录（新文档 / 首次打开）则 100% + 根节点居中。
         applyViewport(mind, loadViewport(docIdRef.current));
       }
@@ -619,13 +620,13 @@ export function MindMapView() {
     if (!mind) return;
     if (skipSyncRef.current) {
       skipSyncRef.current = false;
-      lastSignatureRef.current = treeSignature(nodes, roots);
+      lastSignatureRef.current = treeSignature(nodes, roots, hideDone);
       return;
     }
-    const sig = treeSignature(nodes, roots);
+    const sig = treeSignature(nodes, roots, hideDone);
     if (sig !== lastSignatureRef.current) {
       lastSignatureRef.current = sig;
-      const data = buildMindElixirData(nodes, roots, childrenOf, readMindColors());
+      const data = buildMindElixirData(nodes, roots, childrenOf, readMindColors(), hideDone);
       if (!data) return;
       const selected = selectedRef.current;
       mind.refresh(data);
@@ -642,7 +643,7 @@ export function MindMapView() {
     } else {
       syncNodeMetadata(mind, nodes, onToggle);
     }
-  }, [nodes, roots, childrenOf, onToggle]);
+  }, [nodes, roots, childrenOf, onToggle, hideDone]);
 
   // 平铺视图 / 搜索跳转：展开祖先由 store.revealNode 完成，这里只负责选中 + 滚入视口。
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { listen } from '@tauri-apps/api/event';
 
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
@@ -26,6 +27,17 @@ function App() {
     void loadTree();
     void loadTrash();
   }, [loadDocuments, loadTree, loadTrash]);
+
+  // 系统菜单栏 File → 导出全部 / 导入（Rust 侧发事件，这里复用前端 dialog + 命令）
+  useEffect(() => {
+    const pending = [
+      listen('menu:export-all', () => void useTodoStore.getState().exportAll()),
+      listen('menu:import', () => void useTodoStore.getState().importBundle(null)),
+    ].map(p => p.catch(() => () => {}));
+    return () => {
+      for (const p of pending) void p.then(unlisten => unlisten());
+    };
+  }, []);
 
   // 全局快捷键：Ctrl/Cmd + 1/2/3 切换视图；Ctrl/Cmd + Z 撤销、Shift+Z / Y 重做
   useEffect(() => {

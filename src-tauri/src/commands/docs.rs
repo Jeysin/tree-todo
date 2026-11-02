@@ -1,10 +1,10 @@
-//! 多文档命令（docs/05 M3）：文档列表 / 新建 / 重命名 / 删除 / 切换 / 手动备份。
+//! 多文档 / 目录命令（docs/05 M3、v0.5 目录层级）：列表 / 新建 / 重命名 / 删除 / 切换。
 
 use tauri::State;
 
-use crate::db::{self, Db};
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::model::{DocIndex, DocMeta};
+use crate::model::{DocIndex, DocMeta, FolderMeta};
 use crate::{AppState, CurrentDoc};
 
 #[tauri::command]
@@ -12,14 +12,77 @@ pub fn list_documents(state: State<'_, AppState>) -> AppResult<DocIndex> {
     state.docs.load_index()
 }
 
+/// 新建文档；`folder_id` 为空表示放在根层级。
 #[tauri::command]
-pub fn create_document(state: State<'_, AppState>, name: String) -> AppResult<DocMeta> {
-    state.docs.create(&name)
+pub fn create_document(
+    state: State<'_, AppState>,
+    name: String,
+    folder_id: Option<String>,
+) -> AppResult<DocMeta> {
+    state.docs.create(&name, folder_id)
 }
 
 #[tauri::command]
 pub fn rename_document(state: State<'_, AppState>, id: String, name: String) -> AppResult<DocMeta> {
     state.docs.rename(&id, &name)
+}
+
+/// 新建目录；`parent_id` 为空表示放在根层级。
+#[tauri::command]
+pub fn create_folder(
+    state: State<'_, AppState>,
+    name: String,
+    parent_id: Option<String>,
+) -> AppResult<FolderMeta> {
+    state.docs.create_folder(&name, parent_id)
+}
+
+#[tauri::command]
+pub fn rename_folder(state: State<'_, AppState>, id: String, name: String) -> AppResult<FolderMeta> {
+    state.docs.rename_folder(&id, &name)
+}
+
+/// 把文档移动到目录（folder_id = None 表示根层级）。
+#[tauri::command]
+pub fn move_document(
+    state: State<'_, AppState>,
+    id: String,
+    folder_id: Option<String>,
+) -> AppResult<DocMeta> {
+    state.docs.move_document(&id, folder_id)
+}
+
+/// 把目录移动到另一个目录（parent_id = None 表示根层级）；禁止移进自身子树。
+#[tauri::command]
+pub fn move_folder(
+    state: State<'_, AppState>,
+    id: String,
+    parent_id: Option<String>,
+) -> AppResult<FolderMeta> {
+    state.docs.move_folder(&id, parent_id)
+}
+
+/// 删除目录：目录与子目录移除，里面的文档移入回收站（可恢复）。
+#[tauri::command]
+pub fn delete_folder(state: State<'_, AppState>, id: String) -> AppResult<DocIndex> {
+    let (_, doc_ids) = state.docs.folder_subtree_ids(&id)?;
+    let mut cur = state.current.lock().expect("current doc mutex poisoned");
+
+    // 当前文档就在待删除目录里：先切到别的文档，避免 Windows 下文件被占用。
+    if doc_ids.contains(&cur.id) {
+        let index = state.docs.load_index()?;
+        let next = index
+            .documents
+            .iter()
+            .find(|d| !doc_ids.contains(&d.id))
+            .map(|d| d.id.clone())
+            .ok_or(AppError::LastDocument)?;
+        let db = Db::open(&state.docs.db_path(&next))?;
+        *cur = CurrentDoc { id: next, db };
+        state.history.lock().expect("history mutex poisoned").clear();
+    }
+
+    state.docs.delete_folder(&id)
 }
 
 /// 删除文档：移入文档回收站（至少保留一个活动文档）。若删的是当前文档，先关闭连接再切换。
@@ -73,13 +136,4 @@ pub fn get_current_document(state: State<'_, AppState>) -> AppResult<DocMeta> {
         .into_iter()
         .find(|d| d.id == cur.id)
         .ok_or_else(|| AppError::NodeNotFound(format!("文档 {}", cur.id)))
-}
-
-/// 手动备份当前文档（3 份轮转）。
-#[tauri::command]
-pub fn backup_now(state: State<'_, AppState>) -> AppResult<()> {
-    let cur = state.current.lock().expect("current doc mutex poisoned");
-    let path = state.docs.db_path(&cur.id);
-    db::backup_db(&path)?;
-    Ok(())
 }

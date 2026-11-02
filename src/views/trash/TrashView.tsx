@@ -1,6 +1,6 @@
-/** 回收站视图（v0.4）：回收对象是文档，节点删除不再进入回收站。 */
+/** 回收站视图（v0.6）：回收对象是文档或整个目录；目录恢复时结构与文档一起还原。 */
 import { useEffect } from 'react';
-import { ArrowLeft, FileText, RotateCcw, Trash2 } from 'lucide-react';
+import { ArrowLeft, FileText, Folder, RotateCcw, Trash2 } from 'lucide-react';
 
 import { formatDoneTime } from '../../lib/time';
 import { useTodoStore } from '../../stores/todoStore';
@@ -24,7 +24,7 @@ export function TrashView() {
           <div>
             <h1 className="text-lg font-semibold text-primary">回收站</h1>
             <p className="text-xs text-muted mt-1">
-              删除的文档保留在这里，可随时恢复；「彻底删除」后文档文件不可恢复
+              删除的文档或目录保留在这里，可随时整体恢复；「彻底删除」后数据不可恢复
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -53,38 +53,54 @@ export function TrashView() {
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {trash.map(item => (
-              <div
-                key={item.id}
-                className="group flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3"
-              >
-                <FileText className="w-4 h-4 shrink-0 text-muted" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-primary truncate">{item.name || '未命名文档'}</div>
-                  <div className="text-xs text-muted/70 mt-0.5">
-                    删除于 {formatDoneTime(item.deletedAt)}
+            {trash.map(item => {
+              const isFolder = item.kind === 'folder';
+              return (
+                <div
+                  key={item.id}
+                  className="group flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3"
+                >
+                  {isFolder ? (
+                    <Folder className="w-4 h-4 shrink-0 text-accent/80" />
+                  ) : (
+                    <FileText className="w-4 h-4 shrink-0 text-muted" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-primary truncate">
+                      {item.name || (isFolder ? '未命名目录' : '未命名文档')}
+                    </div>
+                    <div className="text-xs text-muted/70 mt-0.5">
+                      删除于 {formatDoneTime(item.deletedAt)}
+                      {isFolder && (
+                        <>
+                          <span className="mx-1">·</span>
+                          {item.documentCount} 个文档
+                          {item.folderCount > 0 && <span> · {item.folderCount} 个子目录</span>}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => void restoreTrash(item.id)}
+                      className="flex items-center gap-1 px-2.5 h-7 rounded-md border border-border text-xs text-primary hover:bg-base transition-colors"
+                      title={isFolder ? '恢复目录（含其中的文档）' : '恢复文档到侧边栏'}
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      恢复
+                    </button>
+                    <button
+                      onClick={() => void purgeTrash(item.id)}
+                      className="flex items-center gap-1 px-2.5 h-7 rounded-md text-xs text-red-500 hover:bg-red-500/10 transition-colors"
+                      title={isFolder ? '彻底删除目录（含其中的文档，不可恢复）' : '彻底删除文档（不可恢复）'}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      彻底删除
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    onClick={() => void restoreTrash(item.id)}
-                    className="flex items-center gap-1 px-2.5 h-7 rounded-md border border-border text-xs text-primary hover:bg-base transition-colors"
-                    title="恢复文档到侧边栏"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    恢复
-                  </button>
-                  <button
-                    onClick={() => void purgeTrash(item.id)}
-                    className="flex items-center gap-1 px-2.5 h-7 rounded-md text-xs text-red-500 hover:bg-red-500/10 transition-colors"
-                    title="彻底删除文档（不可恢复）"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    彻底删除
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

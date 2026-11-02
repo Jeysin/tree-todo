@@ -179,24 +179,6 @@ ALTER TABLE nodes ADD COLUMN completed_at TEXT;
 CREATE INDEX idx_nodes_deleted ON nodes(deleted_at);
 "#;
 
-/// 启动备份（docs/02 §4 / docs/05 M3：保留最近 3 份轮转备份）。
-pub fn backup_db(db_path: &Path) -> std::io::Result<()> {
-    if !db_path.exists() {
-        return Ok(());
-    }
-    let bak1 = db_path.with_extension("db.bak");
-    let bak2 = db_path.with_extension("db.bak2");
-    let bak3 = db_path.with_extension("db.bak3");
-    // 轮转：bak2 → bak3，bak1 → bak2
-    if bak2.exists() {
-        let _ = std::fs::rename(&bak2, &bak3);
-    }
-    if bak1.exists() {
-        let _ = std::fs::rename(&bak1, &bak2);
-    }
-    std::fs::copy(db_path, bak1).map(|_| ())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

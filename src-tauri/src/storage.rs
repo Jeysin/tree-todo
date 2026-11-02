@@ -8,7 +8,7 @@ use chrono::Utc;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::model::{DocIndex, DocMeta, TrashDoc};
+use crate::model::{DocIndex, DocMeta, FolderMeta, TrashDoc, TrashFolder, TrashItem};
 
 pub struct DocStore {
     data_dir: PathBuf,
@@ -62,6 +62,24 @@ impl DocStore {
         }
         if !moved_db {
             return Err(AppError::NodeNotFound(format!("文档 {id} 的数据库文件不存在")));
+        }
+        Ok(())
+    }
+
+    /// 导入失败时回收半成品文档：从索引移除并删掉数据文件（不进回收站）。
+    pub fn discard(&self, id: &str) -> AppResult<()> {
+        let mut idx = self.load_index()?;
+        idx.documents.retain(|d| d.id != id);
+        if idx.last_opened.as_deref() == Some(id) {
+            idx.last_opened = idx.documents.first().map(|d| d.id.clone());
+        }
+        self.save_index(&idx)?;
+        let base = self.docs_dir().join(id);
+        for suffix in ["db", "db-wal", "db-shm"] {
+            let p = PathBuf::from(format!("{}.{}", base.display(), suffix));
+            if p.exists() {
+                let _ = fs::remove_file(p);
+            }
         }
         Ok(())
     }
@@ -127,27 +145,201 @@ impl DocStore {
             documents: vec![DocMeta {
                 id: id.clone(),
                 name: "我的任务".to_string(),
+                folder_id: None,
                 created_at: Utc::now().to_rfc3339(),
             }],
+            folders: Vec::new(),
             last_opened: Some(id),
             trash: Vec::new(),
+            trash_folders: Vec::new(),
         };
         self.save_index(&idx)?;
         Ok(idx)
     }
 
-    pub fn create(&self, name: &str) -> AppResult<DocMeta> {
+    /// 新建文档；`folder_id` 为 None 时放在根层级。
+    pub fn create(&self, name: &str, folder_id: Option<String>) -> AppResult<DocMeta> {
         let mut idx = self.ensure()?;
+        if let Some(fid) = folder_id.as_deref()
+            && !idx.folders.iter().any(|f| f.id == fid)
+        {
+            return Err(AppError::NodeNotFound(format!("目录 {fid}")));
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let _ = Db::open(&self.db_path(&id))?;
         let meta = DocMeta {
             id,
             name: name.trim().to_string(),
+            folder_id,
             created_at: Utc::now().to_rfc3339(),
         };
         idx.documents.push(meta.clone());
         self.save_index(&idx)?;
         Ok(meta)
+    }
+
+    /// 新建目录（v0.5 侧边栏层级结构）；`parent_id` 为 None 时放在根层级。
+    pub fn create_folder(&self, name: &str, parent_id: Option<String>) -> AppResult<FolderMeta> {
+        let mut idx = self.ensure()?;
+        if let Some(pid) = parent_id.as_deref()
+            && !idx.folders.iter().any(|f| f.id == pid)
+        {
+            return Err(AppError::NodeNotFound(format!("目录 {pid}")));
+        }
+        let meta = FolderMeta {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.trim().to_string(),
+            parent_id,
+            created_at: Utc::now().to_rfc3339(),
+        };
+        idx.folders.push(meta.clone());
+        self.save_index(&idx)?;
+        Ok(meta)
+    }
+
+    pub fn rename_folder(&self, id: &str, name: &str) -> AppResult<FolderMeta> {
+        let mut idx = self.load_index()?;
+        let folder = idx
+            .folders
+            .iter_mut()
+            .find(|f| f.id == id)
+            .ok_or_else(|| AppError::NodeNotFound(format!("目录 {id}")))?;
+        folder.name = name.trim().to_string();
+        let meta = folder.clone();
+        self.save_index(&idx)?;
+        Ok(meta)
+    }
+
+    /// 目录子树（含自身）里的目录 id 与文档 id。
+    pub fn folder_subtree_ids(&self, id: &str) -> AppResult<(Vec<String>, Vec<String>)> {
+        let idx = self.load_index()?;
+        if !idx.folders.iter().any(|f| f.id == id) {
+            return Err(AppError::NodeNotFound(format!("目录 {id}")));
+        }
+        let mut folder_ids = vec![id.to_string()];
+        let mut cursor = 0;
+        while cursor < folder_ids.len() {
+            let current = folder_ids[cursor].clone();
+            for f in &idx.folders {
+                if f.parent_id.as_deref() == Some(current.as_str()) && !folder_ids.contains(&f.id) {
+                    folder_ids.push(f.id.clone());
+                }
+            }
+            cursor += 1;
+        }
+        let doc_ids = idx
+            .documents
+            .iter()
+            .filter(|d| {
+                d.folder_id
+                    .as_deref()
+                    .is_some_and(|f| folder_ids.iter().any(|x| x == f))
+            })
+            .map(|d| d.id.clone())
+            .collect();
+        Ok((folder_ids, doc_ids))
+    }
+
+    /// 把文档移动到目录（`folder_id` = None 表示根层级）。
+    pub fn move_document(&self, id: &str, folder_id: Option<String>) -> AppResult<DocMeta> {
+        let mut idx = self.load_index()?;
+        if let Some(fid) = folder_id.as_deref()
+            && !idx.folders.iter().any(|f| f.id == fid)
+        {
+            return Err(AppError::NodeNotFound(format!("目录 {fid}")));
+        }
+        let doc = idx
+            .documents
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or_else(|| AppError::NodeNotFound(format!("文档 {id}")))?;
+        doc.folder_id = folder_id;
+        let meta = doc.clone();
+        self.save_index(&idx)?;
+        Ok(meta)
+    }
+
+    /// 把目录移动到另一个目录（None = 根层级）；禁止移动到自己或自己的子孙下。
+    pub fn move_folder(&self, id: &str, parent_id: Option<String>) -> AppResult<FolderMeta> {
+        let mut idx = self.load_index()?;
+        if !idx.folders.iter().any(|f| f.id == id) {
+            return Err(AppError::NodeNotFound(format!("目录 {id}")));
+        }
+        if let Some(pid) = parent_id.as_deref() {
+            if pid == id {
+                return Err(AppError::CyclicMove);
+            }
+            if !idx.folders.iter().any(|f| f.id == pid) {
+                return Err(AppError::NodeNotFound(format!("目录 {pid}")));
+            }
+            let (subtree, _) = self.folder_subtree_ids(id)?;
+            if subtree.iter().any(|x| x == pid) {
+                return Err(AppError::CyclicMove);
+            }
+        }
+        let folder = idx
+            .folders
+            .iter_mut()
+            .find(|f| f.id == id)
+            .ok_or_else(|| AppError::NodeNotFound(format!("目录 {id}")))?;
+        folder.parent_id = parent_id;
+        let meta = folder.clone();
+        self.save_index(&idx)?;
+        Ok(meta)
+    }
+
+    /// 删除目录：**整个目录（含子目录与其中文档）作为一个条目进回收站**，
+    /// 恢复时原样还原结构与文档归属。
+    /// 若会把所有文档都删掉则拒绝（至少保留一个文档）。
+    pub fn delete_folder(&self, id: &str) -> AppResult<DocIndex> {
+        let mut idx = self.load_index()?;
+        let (folder_ids, doc_ids) = self.folder_subtree_ids(id)?;
+        if !doc_ids.is_empty() && doc_ids.len() == idx.documents.len() {
+            return Err(AppError::LastDocument);
+        }
+        let root = idx
+            .folders
+            .iter()
+            .find(|f| f.id == id)
+            .cloned()
+            .ok_or_else(|| AppError::NodeNotFound(format!("目录 {id}")))?;
+        let folders: Vec<FolderMeta> = idx
+            .folders
+            .iter()
+            .filter(|f| folder_ids.contains(&f.id))
+            .cloned()
+            .collect();
+        let documents: Vec<DocMeta> = idx
+            .documents
+            .iter()
+            .filter(|d| doc_ids.contains(&d.id))
+            .cloned()
+            .collect();
+
+        for d in &documents {
+            self.move_doc_files(&d.id, &self.docs_dir(), &self.trash_dir())?;
+        }
+        idx.documents.retain(|d| !doc_ids.contains(&d.id));
+        idx.folders.retain(|f| !folder_ids.contains(&f.id));
+        idx.trash_folders.insert(
+            0,
+            TrashFolder {
+                id: root.id,
+                name: root.name,
+                deleted_at: Utc::now().to_rfc3339(),
+                folders,
+                documents,
+            },
+        );
+        if idx
+            .last_opened
+            .as_deref()
+            .is_some_and(|cur| doc_ids.iter().any(|x| x == cur))
+        {
+            idx.last_opened = idx.documents.first().map(|d| d.id.clone());
+        }
+        self.save_index(&idx)?;
+        Ok(idx)
     }
 
     pub fn rename(&self, id: &str, name: &str) -> AppResult<DocMeta> {
@@ -193,14 +385,69 @@ impl DocStore {
         Ok(idx)
     }
 
-    /// 回收站文档列表。
-    pub fn trash_list(&self) -> AppResult<Vec<TrashDoc>> {
-        Ok(self.load_index()?.trash)
+    /// 回收站列表（文档 + 目录，按删除时间倒序）。
+    pub fn trash_list(&self) -> AppResult<Vec<TrashItem>> {
+        let idx = self.load_index()?;
+        let mut items: Vec<TrashItem> = idx
+            .trash
+            .iter()
+            .map(|d| TrashItem {
+                id: d.id.clone(),
+                kind: "doc".to_string(),
+                name: d.name.clone(),
+                created_at: d.created_at.clone(),
+                deleted_at: d.deleted_at.clone(),
+                document_count: 1,
+                folder_count: 0,
+            })
+            .collect();
+        for f in &idx.trash_folders {
+            items.push(TrashItem {
+                id: f.id.clone(),
+                kind: "folder".to_string(),
+                name: f.name.clone(),
+                created_at: f
+                    .folders
+                    .iter()
+                    .find(|x| x.id == f.id)
+                    .map(|x| x.created_at.clone())
+                    .unwrap_or_default(),
+                deleted_at: f.deleted_at.clone(),
+                document_count: f.documents.len(),
+                folder_count: f.folders.len().saturating_sub(1),
+            });
+        }
+        items.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        Ok(items)
     }
 
-    /// 从回收站恢复文档（文件移回 docs/，索引恢复）。
+    /// 从回收站恢复（文档或整个目录）。
     pub fn restore(&self, id: &str) -> AppResult<DocIndex> {
         let mut idx = self.load_index()?;
+
+        // 目录条目：目录结构 + 文档一起还原
+        if let Some(pos) = idx.trash_folders.iter().position(|f| f.id == id) {
+            let entry = idx.trash_folders.remove(pos);
+            for d in &entry.documents {
+                self.move_doc_files(&d.id, &self.trash_dir(), &self.docs_dir())?;
+            }
+            let mut folders = entry.folders;
+            // 原来的父目录可能已被删除：找不到就回到根层级
+            if let Some(root) = folders.iter_mut().find(|f| f.id == entry.id)
+                && let Some(pid) = root.parent_id.clone()
+                && !idx.folders.iter().any(|f| f.id == pid)
+            {
+                root.parent_id = None;
+            }
+            idx.folders.extend(folders);
+            idx.documents.extend(entry.documents);
+            if idx.last_opened.is_none() {
+                idx.last_opened = idx.documents.first().map(|d| d.id.clone());
+            }
+            self.save_index(&idx)?;
+            return Ok(idx);
+        }
+
         let pos = idx
             .trash
             .iter()
@@ -211,6 +458,8 @@ impl DocStore {
         idx.documents.push(DocMeta {
             id: doc.id,
             name: doc.name,
+            // 目录可能已被删除：恢复的文档放回根层级，避免指向不存在的目录。
+            folder_id: None,
             created_at: doc.created_at,
         });
         if idx.last_opened.is_none() {
@@ -220,22 +469,36 @@ impl DocStore {
         Ok(idx)
     }
 
-    /// 从回收站彻底删除文档（物理删除 db 文件）。
+    /// 从回收站彻底删除（文档或整个目录，物理删除 db 文件）。
     pub fn purge(&self, id: &str) -> AppResult<DocIndex> {
         let mut idx = self.load_index()?;
+        if let Some(pos) = idx.trash_folders.iter().position(|f| f.id == id) {
+            let entry = idx.trash_folders.remove(pos);
+            for d in &entry.documents {
+                self.remove_trash_files(&d.id);
+            }
+            self.save_index(&idx)?;
+            return Ok(idx);
+        }
         idx.trash.retain(|d| d.id != id);
         self.remove_trash_files(id);
         self.save_index(&idx)?;
         Ok(idx)
     }
 
-    /// 清空文档回收站。
+    /// 清空文档回收站（文档 + 目录条目）。
     pub fn empty_trash(&self) -> AppResult<DocIndex> {
         let mut idx = self.load_index()?;
         for doc in &idx.trash {
             self.remove_trash_files(&doc.id);
         }
+        for folder in &idx.trash_folders {
+            for doc in &folder.documents {
+                self.remove_trash_files(&doc.id);
+            }
+        }
         idx.trash.clear();
+        idx.trash_folders.clear();
         self.save_index(&idx)?;
         Ok(idx)
     }
@@ -261,7 +524,7 @@ mod tests {
     fn doc_trash_restore_and_purge() {
         let (store, dir) = temp_store();
         let first = store.ensure().unwrap().documents[0].clone();
-        let second = store.create("第二本").unwrap();
+        let second = store.create("第二本", None).unwrap();
 
         // 第一个文档移入回收站：文件应移到 trash/，活动列表只剩第二本。
         let idx = store.trash(&first.id).unwrap();
@@ -293,6 +556,114 @@ mod tests {
         let idx = store.ensure().unwrap();
         let id = idx.documents[0].id.clone();
         assert!(matches!(store.trash(&id), Err(AppError::LastDocument)));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn folder_tree_nests_and_delete_restores_whole_subtree() {
+        let (store, dir) = temp_store();
+        let root_doc = store.ensure().unwrap().documents[0].clone();
+        let work = store.create_folder("工作", None).unwrap();
+        let q4 = store.create_folder("Q4", Some(work.id.clone())).unwrap();
+        let doc = store.create("周报", Some(q4.id.clone())).unwrap();
+
+        let idx = store.load_index().unwrap();
+        assert_eq!(idx.folders.len(), 2);
+        assert_eq!(
+            idx.documents
+                .iter()
+                .find(|d| d.id == doc.id)
+                .unwrap()
+                .folder_id
+                .as_deref(),
+            Some(q4.id.as_str())
+        );
+
+        // 删除父目录：整个目录进回收站（一条记录），文档文件移动到 trash/
+        let idx = store.delete_folder(&work.id).unwrap();
+        assert!(idx.folders.is_empty());
+        assert_eq!(idx.documents.len(), 1);
+        assert_eq!(idx.documents[0].id, root_doc.id);
+        assert!(idx.trash.is_empty(), "目录不该拆成单文档条目");
+        assert_eq!(idx.trash_folders.len(), 1);
+        assert_eq!(idx.trash_folders[0].id, work.id);
+        assert_eq!(idx.trash_folders[0].documents.len(), 1);
+        assert!(!store.db_path(&doc.id).exists());
+        assert!(store.trash_base(&doc.id).with_extension("db").exists());
+
+        // 恢复：目录结构与文档归属原样还原
+        let idx = store.restore(&work.id).unwrap();
+        assert!(idx.trash_folders.is_empty());
+        assert_eq!(idx.folders.len(), 2);
+        assert_eq!(idx.documents.len(), 2);
+        assert!(store.db_path(&doc.id).exists());
+        let restored = idx.documents.iter().find(|d| d.id == doc.id).unwrap();
+        assert_eq!(restored.folder_id.as_deref(), Some(q4.id.as_str()));
+        assert!(idx
+            .folders
+            .iter()
+            .any(|f| f.id == q4.id && f.parent_id.as_deref() == Some(work.id.as_str())));
+
+        // 彻底删除目录：同理按整棵目录清理
+        store.delete_folder(&work.id).unwrap();
+        let idx = store.purge(&work.id).unwrap();
+        assert!(idx.trash_folders.is_empty());
+        assert!(!store.trash_base(&doc.id).with_extension("db").exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cannot_delete_folder_holding_every_document() {
+        let (store, dir) = temp_store();
+        let only = store.ensure().unwrap().documents[0].clone();
+        let folder = store.create_folder("全部", None).unwrap();
+        let mut idx = store.load_index().unwrap();
+        idx.documents
+            .iter_mut()
+            .find(|d| d.id == only.id)
+            .unwrap()
+            .folder_id = Some(folder.id.clone());
+        store.save_index(&idx).unwrap();
+
+        assert!(matches!(
+            store.delete_folder(&folder.id),
+            Err(AppError::LastDocument)
+        ));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn move_document_and_folder_respect_hierarchy() {
+        let (store, dir) = temp_store();
+        let root_doc = store.ensure().unwrap().documents[0].clone();
+        let work = store.create_folder("工作", None).unwrap();
+        let q4 = store.create_folder("Q4", Some(work.id.clone())).unwrap();
+
+        // 文档移进目录 / 移回根
+        let moved = store.move_document(&root_doc.id, Some(q4.id.clone())).unwrap();
+        assert_eq!(moved.folder_id.as_deref(), Some(q4.id.as_str()));
+        let back = store.move_document(&root_doc.id, None).unwrap();
+        assert!(back.folder_id.is_none());
+
+        // 目录不能移进自己或自己的子孙
+        assert!(matches!(
+            store.move_folder(&work.id, Some(work.id.clone())),
+            Err(AppError::CyclicMove)
+        ));
+        assert!(matches!(
+            store.move_folder(&work.id, Some(q4.id.clone())),
+            Err(AppError::CyclicMove)
+        ));
+
+        // 子目录可以提到根，再挂回去
+        let lifted = store.move_folder(&q4.id, None).unwrap();
+        assert!(lifted.parent_id.is_none());
+        let reattached = store
+            .move_folder(&q4.id, Some(work.id.clone()))
+            .unwrap();
+        assert_eq!(reattached.parent_id.as_deref(), Some(work.id.as_str()));
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
