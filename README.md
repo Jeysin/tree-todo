@@ -169,7 +169,7 @@ tree-todo 把这两件事合成一个动作：
 ### 构建与运行
 
 ```bash
-git clone https://github.com/jeysin/tree-todo.git
+git clone https://github.com/Jeysin/tree-todo.git
 cd tree-todo
 
 pnpm install        # 安装前端依赖

@@ -54,4 +54,4 @@
 - 节点 checkbox 与文本同行并相对节点垂直居中，长文本不再把 checkbox 挤到单独一行。
 - 平铺视图改为左右双栏、各自独立滚动，充分利用宽屏空间。
 
-[1.0.0]: https://github.com/jeysin/tree-todo/releases/tag/v1.0.0
+[1.0.0]: https://github.com/Jeysin/tree-todo/releases/tag/v1.0.0
