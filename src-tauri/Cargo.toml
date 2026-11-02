@@ -1,6 +1,6 @@
 [package]
 name = "tree-todo"
-version = "0.1.0"
+version = "1.0.0"
 description = "树形待办 —— 让待办像脑图一样生长"
 authors = ["jeysin"]
 edition = "2024"
