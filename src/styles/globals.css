@@ -85,15 +85,116 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* react-flow 画布底色与系统主题同步 */
-.react-flow {
-  --xy-background-color: var(--bg-base);
-  --xy-edge-stroke-default: var(--text-muted);
+/* ── Mind Elixir 脑图皮肤（交互完全交给 Mind Elixir，只覆盖视觉 token） ── */
+.mind-map-container {
+  --todo-check-size: 16px;
 }
 
-/* 布局变化时节点平滑移动（docs/04 §1 克制动效：≤220ms，仅用于结构变化） */
-.react-flow__node {
-  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+.mind-map-container me-parent me-tpc {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 4px 8px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+}
+
+.mind-map-container me-tpc {
+  font-size: 14px;
+  line-height: 22px;
+  max-width: 320px;
+  color: var(--text-primary);
+  white-space: normal;
+}
+
+
+.mind-map-container me-tpc .text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mind-map-container me-tpc.todo-done {
+  opacity: 0.5;
+}
+
+.mind-map-container me-tpc.todo-done .text {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.mind-map-container me-tpc.todo-root-topic {
+  color: #fff;
+}
+
+.mind-map-container me-tpc.todo-root-topic.todo-done {
+  opacity: 0.75;
+}
+
+.mind-map-container me-tpc.todo-root-topic.todo-done .text {
+  color: #fff;
+}
+
+/* 待办 checkbox：视觉 16px，命中区域扩至 24px */
+.mind-map-container me-tpc > .todo-check {
+  pointer-events: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  width: var(--todo-check-size);
+  height: var(--todo-check-size);
+  margin-right: 6px;
+  margin-top: 3px;
+  padding: 0;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 9999px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.mind-map-container me-tpc > .todo-check::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.mind-map-container me-tpc > .todo-check:hover {
+  border-color: var(--accent);
+}
+
+.mind-map-container me-tpc > .todo-check.checked {
+  border-color: var(--success);
+  background: var(--success);
+}
+
+.mind-map-container me-tpc > .todo-check.checked::before {
+  content: "";
+  width: 4px;
+  height: 7px;
+  border-right: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.mind-map-container me-root me-tpc > .todo-check {
+  --todo-check-size: 18px;
+  border-color: #fff;
+}
+
+.mind-map-container me-root me-tpc > .todo-check.checked {
+  border-color: #fff;
+  background: #fff;
+}
+
+.mind-map-container me-root me-tpc > .todo-check.checked::before {
+  border-color: var(--accent);
+}
+
+/* 折叠/展开角标保持 Mind Elixir 原生设计，只做主题色微调 */
+.mind-map-container me-epd {
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.25));
 }
 
 /* 平铺定位 / 新建节点的短暂高亮脉冲 */
@@ -106,7 +207,7 @@ body {
   }
 }
 
-.node-flash {
+.todo-flash {
   animation: node-flash 1.1s ease-out 2;
 }
 

@@ -1,27 +1,26 @@
 import { useMemo } from 'react';
 import { Maximize, Minus, Plus } from 'lucide-react';
-import { useReactFlow, useStore } from '@xyflow/react';
 
 import { useTodoStore } from '../stores/todoStore';
+import { mindMapFit, mindMapZoomIn, mindMapZoomOut } from '../views/tree/mindmapApi';
 
 /** 缩放控制（仅树形视图；docs/04 §2 状态栏右侧）。 */
 function ZoomControls() {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
-  const zoom = useStore(s => s.transform[2]);
+  const zoom = useTodoStore(s => s.zoomPercent);
 
   const btn =
     'w-6 h-6 rounded flex items-center justify-center hover:bg-base hover:text-primary transition-colors';
 
   return (
     <div className="flex items-center gap-1">
-      <button className={btn} onClick={() => void zoomOut({ duration: 150 })} title="缩小">
+      <button className={btn} onClick={mindMapZoomOut} title="缩小">
         <Minus className="w-3.5 h-3.5" />
       </button>
-      <span className="w-11 text-center tabular-nums select-none">{Math.round(zoom * 100)}%</span>
-      <button className={btn} onClick={() => void zoomIn({ duration: 150 })} title="放大">
+      <span className="w-11 text-center tabular-nums select-none">{zoom}%</span>
+      <button className={btn} onClick={mindMapZoomIn} title="放大">
         <Plus className="w-3.5 h-3.5" />
       </button>
-      <button className={btn} onClick={() => void fitView({ padding: 0.15, duration: 300 })} title="适应视图 (Shift+1)">
+      <button className={btn} onClick={mindMapFit} title="适应视图 (Shift+1)">
         <Maximize className="w-3.5 h-3.5" />
       </button>
     </div>

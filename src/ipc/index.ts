@@ -10,16 +10,20 @@ import type {
   DocIndex,
   DocMeta,
   TodoNode,
-  TrashItem,
+  TrashDoc,
 } from './types';
 
 export const ipc = {
   /** 全量树（启动加载一次，此后靠变更快照增量合并）。 */
   getTree: (): Promise<TodoNode[]> => invoke('get_tree'),
 
-  /** 创建节点；parentId 为 null 时创建根。 */
-  createNode: (parentId: string | null, content: string): Promise<CreateResult> =>
-    invoke('create_node', { parentId, content }),
+  /** 创建节点；parentId 为 null 时创建根；position 用于“插入为兄弟”保持顺序。 */
+  createNode: (
+    parentId: string | null,
+    content: string,
+    position: number | null = null,
+  ): Promise<CreateResult> =>
+    invoke('create_node', { parentId, content, position }),
 
   /** 编辑内容（E1：不触发状态变化）。 */
   updateContent: (id: string, content: string): Promise<Affected> =>
@@ -59,11 +63,11 @@ export const ipc = {
   /** 从指定路径导入（追加 + id 重映射 + 状态校正）。 */
   importJson: (path: string): Promise<Affected> => invoke('import_json', { path }),
 
-  // ── 回收站（v0.3）──
-  listTrash: (): Promise<TrashItem[]> => invoke('list_trash'),
-  restoreTrash: (id: string): Promise<Affected> => invoke('restore_trash', { id }),
-  purgeTrash: (id: string): Promise<void> => invoke('purge_trash', { id }),
-  emptyTrash: (): Promise<void> => invoke('empty_trash'),
+  // ── 回收站（v0.4：回收文档）──
+  listTrash: (): Promise<TrashDoc[]> => invoke('list_trash'),
+  restoreTrash: (id: string): Promise<DocIndex> => invoke('restore_trash', { id }),
+  purgeTrash: (id: string): Promise<DocIndex> => invoke('purge_trash', { id }),
+  emptyTrash: (): Promise<DocIndex> => invoke('empty_trash'),
 
   // ── 多文档（v0.3）──
   listDocuments: (): Promise<DocIndex> => invoke('list_documents'),

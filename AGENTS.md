@@ -15,7 +15,7 @@
 | 桌面框架 | Tauri 2 |
 | 前端 | React 19 + TypeScript（strict）+ Vite + Tailwind CSS 4 |
 | 前端状态 | Zustand 5 |
-| 树渲染 | @xyflow/react（画布）+ d3-hierarchy（布局） |
+| 树渲染 | Mind Elixir 5（本地 fork/补丁）：脑图交互全部由它提供 |
 | 后端 | Rust（stable，2024 edition）+ rusqlite（bundled SQLite）+ serde |
 
 ## 常用命令
@@ -56,7 +56,8 @@ docs/           # 技术文档
 4. **新建节点永远是 pending**（不变量 I4），无任何例外。
 5. 修改 schema 必须走迁移（`schema_version`），禁止改表不升版本。
 6. **撤销历史**（v0.2 起）：除视图类操作（`set_collapsed` / `expand_nodes` / `collapse_all`）外，所有变更必须经 `history::run_with_history` 记录（before 快照 + after 变更）——绕过记录会导致撤销破坏数据一致性。回放走 `history::apply_patch`，禁止在回放后再次传播。
-7. **软删除**（v0.3 起）：所有视图查询必须过滤 `deleted_at IS NULL`（`queries.rs` 已统一处理，新增 SQL 不得遗漏）；彻底删除（purge）是物理删除、不进历史；`completed_at` 只能由 `update_status` / 级联 SQL 维护。
+7. **回收站对象是文档**（v0.4 起）：删除文档时把 `docs/{id}.db*` 移入 `trash/` 并记录在 `documents.json` 的 `trash` 列表；节点删除是物理删除（根任务不可删），通过 Rust 历史快照支持撤销。所有视图查询仍统一过滤 `deleted_at IS NULL`（该字段保留兼容，v0.4 不再写入）；`completed_at` 只能由 `update_status` / 级联 SQL 维护。
+8. **单根模型**（v0.4 起）：每个文档只有一个根任务（`parent_id IS NULL`），根任务可编辑/可完成、不可删除/不可拖拽；多任务线通过多文档承载。
 
 ## 代码规范
 

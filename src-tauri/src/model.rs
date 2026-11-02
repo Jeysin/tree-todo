@@ -27,7 +27,7 @@ impl NodeStatus {
 /// 节点（docs/02 §1.2）：序列化为 camelCase 供前端消费。
 ///
 /// v0.3 新增：
-/// - `deleted_at`：软删除时间（回收站，docs/05 M3）；常规查询一律过滤非空。
+/// - `deleted_at`：旧版节点软删除字段（v0.4 起回收站改为文档级，该字段保留兼容、恒为空）。
 /// - `completed_at`：完成时间（统计面板"最近 7 天完成"，随 status 变更维护）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,12 +61,15 @@ pub struct CreateResult {
     pub upserted: Vec<Node>,
 }
 
-/// 回收站条目：被软删的顶层节点 + 其被删子孙数。
-#[derive(Debug, Serialize)]
+/// 回收站文档：被删除的文档元数据 + 删除时间。
+/// 回收站只回收文档，节点删除是物理删除（可用撤销历史恢复）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TrashItem {
-    pub node: Node,
-    pub descendant_count: i64,
+pub struct TrashDoc {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub deleted_at: String,
 }
 
 /// 文档元数据（docs/05 M3 多文档：每个文档一个独立 SQLite 文件）。
@@ -84,6 +87,9 @@ pub struct DocMeta {
 pub struct DocIndex {
     pub documents: Vec<DocMeta>,
     pub last_opened: Option<String>,
+    /// 旧版索引没有该字段，使用 default 保证兼容读取。
+    #[serde(default)]
+    pub trash: Vec<TrashDoc>,
 }
 
 /// 导入/导出文件的节点格式（docs/02 §5：JSON 字段为 snake_case）。

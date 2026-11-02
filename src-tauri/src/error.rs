@@ -23,6 +23,10 @@ pub enum AppError {
     /// 多文档：至少需要保留一个文档（docs/05 M3）。
     #[error("至少需要保留一个文档")]
     LastDocument,
+
+    /// 单根模型：根任务不可删除、不可移动。
+    #[error("根任务不可删除或移动")]
+    RootProtected,
 }
 
 impl Serialize for AppError {
@@ -37,6 +41,7 @@ impl Serialize for AppError {
             AppError::CyclicMove => "CyclicMove",
             AppError::ImportFormat(_) => "ImportFormat",
             AppError::LastDocument => "LastDocument",
+            AppError::RootProtected => "RootProtected",
         };
         let mut s = serializer.serialize_struct("AppError", 2)?;
         s.serialize_field("code", code)?;

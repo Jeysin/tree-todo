@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { ReactFlowProvider } from '@xyflow/react';
 
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
@@ -9,7 +8,7 @@ import { useTodoStore } from './stores/todoStore';
 import { FlatView } from './views/flat/FlatView';
 import { StatsView } from './views/stats/StatsView';
 import { TrashView } from './views/trash/TrashView';
-import { TreeView } from './views/tree/TreeView';
+import { MindMapView } from './views/tree/MindMapView';
 
 function App() {
   const viewMode = useTodoStore(s => s.viewMode);
@@ -31,8 +30,9 @@ function App() {
   // 全局快捷键：Ctrl/Cmd + 1/2/3 切换视图；Ctrl/Cmd + Z 撤销、Shift+Z / Y 重做
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      const isEditable = tag === 'INPUT' || tag === 'TEXTAREA';
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true;
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
@@ -65,13 +65,13 @@ function App() {
   }
 
   return (
-    <ReactFlowProvider>
+    <>
       <div className="flex h-full">
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0">
           <TopBar />
           <main className="relative flex-1 min-h-0">
-            {viewMode === 'tree' && <TreeView />}
+            {viewMode === 'tree' && <MindMapView />}
             {viewMode === 'flat' && <FlatView />}
             {viewMode === 'stats' && <StatsView />}
             {viewMode === 'trash' && <TrashView />}
@@ -80,7 +80,7 @@ function App() {
         </div>
       </div>
       <ToastContainer />
-    </ReactFlowProvider>
+    </>
   );
 }
 

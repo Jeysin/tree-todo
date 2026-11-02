@@ -22,23 +22,30 @@ pub fn rename_document(state: State<'_, AppState>, id: String, name: String) -> 
     state.docs.rename(&id, &name)
 }
 
-/// 删除文档（至少保留一个）。若删的是当前文档，自动切换到剩余的第一个。
+/// 删除文档：移入文档回收站（至少保留一个活动文档）。若删的是当前文档，先关闭连接再切换。
 #[tauri::command]
 pub fn delete_document(state: State<'_, AppState>, id: String) -> AppResult<DocIndex> {
     let mut cur = state.current.lock().expect("current doc mutex poisoned");
-    let idx = state.docs.remove(&id)?;
-    if cur.id == id {
-        let next = idx
-            .last_opened
-            .clone()
+    let index = state.docs.load_index()?;
+    let is_current = cur.id == id;
+
+    // Windows 下不能 rename 正在打开的 SQLite 文件，先切换连接再移动文件。
+    if is_current {
+        let next = index
+            .documents
+            .iter()
+            .find(|d| d.id != id)
+            .map(|d| d.id.clone())
             .ok_or(AppError::LastDocument)?;
         let db = Db::open(&state.docs.db_path(&next))?;
-        *cur = CurrentDoc {
-            id: next.clone(),
-            db,
-        };
+        *cur = CurrentDoc { id: next, db };
         state.history.lock().expect("history mutex poisoned").clear();
-        state.docs.set_last_opened(&next)?;
+    }
+
+    let mut idx = state.docs.trash(&id)?;
+    if is_current {
+        idx.last_opened = Some(cur.id.clone());
+        state.docs.set_last_opened(&cur.id)?;
     }
     Ok(idx)
 }

@@ -26,7 +26,8 @@ const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Sun }[] = [
 export function TopBar() {
   const viewMode = useTodoStore(s => s.viewMode);
   const setViewMode = useTodoStore(s => s.setViewMode);
-  const createChild = useTodoStore(s => s.createChild);
+  const roots = useTodoStore(s => s.roots);
+  const requestCreate = useTodoStore(s => s.requestCreate);
   const loaded = useTodoStore(s => s.loaded);
   const collapseAll = useTodoStore(s => s.collapseAll);
   const setSearchOpen = useTodoStore(s => s.setSearchOpen);
@@ -150,13 +151,18 @@ export function TopBar() {
 
       {(viewMode === 'tree' || viewMode === 'flat') && (
         <button
-          onClick={() => void createChild(null)}
-          disabled={!loaded}
+          onClick={() => {
+            const rootId = roots[0];
+            if (!rootId) return;
+            if (viewMode !== 'tree') setViewMode('tree');
+            requestCreate(rootId);
+          }}
+          disabled={!loaded || !roots[0]}
           className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-accent text-white text-[13px] font-medium shadow-sm hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-40"
-          title="新建根节点"
+          title="在根任务下新建任务"
         >
           <Plus className="w-4 h-4" />
-          新建根节点
+          新建任务
         </button>
       )}
     </header>

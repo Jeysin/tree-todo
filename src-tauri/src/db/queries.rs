@@ -6,7 +6,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{AppError, AppResult};
-use crate::model::{Node, NodeStatus, TrashItem};
+use crate::model::{Node, NodeStatus};
 
 const COLS: &str =
     "id, parent_id, content, note, status, position, collapsed, created_at, updated_at, deleted_at, completed_at";
@@ -49,24 +49,22 @@ pub fn get_node(conn: &Connection, id: &str) -> AppResult<Node> {
     Ok(node)
 }
 
-/// 含回收站节点的查询（恢复祖先链等场景）。
-pub fn get_node_any(conn: &Connection, id: &str) -> AppResult<Node> {
-    let node = conn
-        .query_row(
-            &format!("SELECT {COLS} FROM nodes WHERE id = ?1"),
-            params![id],
-            row_to_node,
-        )
-        .optional()?
-        .ok_or_else(|| AppError::NodeNotFound(id.to_string()))?;
-    Ok(node)
-}
-
 pub fn all_nodes(conn: &Connection) -> AppResult<Vec<Node>> {
     let stmt = conn.prepare(&format!(
         "SELECT {COLS} FROM nodes WHERE deleted_at IS NULL"
     ))?;
     collect(stmt, &[])
+}
+
+/// 当前文档唯一根任务 id（单根模型；无根时返回 None）。
+pub fn root_id(conn: &Connection) -> AppResult<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM nodes WHERE parent_id IS NULL AND deleted_at IS NULL ORDER BY position LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 /// 同级末尾插入位置（docs/02 §1.3 分数定位法：max + 1024 步长起步）。
@@ -144,102 +142,6 @@ pub fn set_collapsed(conn: &Connection, id: &str, collapsed: bool, now: &str) ->
 /// 物理删除（彻底删除 / 撤销回放中的删除操作）。级联由 ON DELETE CASCADE 承担。
 pub fn delete_node(conn: &Connection, id: &str) -> AppResult<()> {
     conn.execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
-    Ok(())
-}
-
-/// 软删除整棵子树（v0.3 回收站）：返回实际被标记的 id 列表（未删 → 已删）。
-pub fn soft_delete_subtree(conn: &Connection, id: &str, now: &str) -> AppResult<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "WITH RECURSIVE subtree(sid) AS (
-            SELECT id FROM nodes WHERE id = ?1
-            UNION ALL
-            SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id = s.sid
-        )
-        UPDATE nodes SET deleted_at = ?2, updated_at = ?2
-        WHERE id IN (SELECT sid FROM subtree) AND deleted_at IS NULL
-        RETURNING id",
-    )?;
-    let rows = stmt.query_map(params![id, now], |r| r.get::<_, String>(0))?;
-    let mut ids = Vec::new();
-    for row in rows {
-        ids.push(row?);
-    }
-    Ok(ids)
-}
-
-/// 恢复整棵子树（清除 deleted_at），返回被恢复的节点。
-pub fn restore_subtree(conn: &Connection, id: &str, now: &str) -> AppResult<Vec<Node>> {
-    let mut stmt = conn.prepare(&format!(
-        "WITH RECURSIVE subtree(sid) AS (
-            SELECT id FROM nodes WHERE id = ?1
-            UNION ALL
-            SELECT n.id FROM nodes n JOIN subtree s ON n.parent_id = s.sid
-        )
-        UPDATE nodes SET deleted_at = NULL, updated_at = ?2
-        WHERE id IN (SELECT sid FROM subtree) AND deleted_at IS NOT NULL
-        RETURNING {COLS}"
-    ))?;
-    let rows = stmt.query_map(params![id, now], row_to_node)?;
-    let mut nodes = Vec::new();
-    for row in rows {
-        nodes.push(row?);
-    }
-    Ok(nodes)
-}
-
-/// 恢复单个节点（仅清 deleted_at，用于祖先链联动恢复）。
-pub fn restore_node(conn: &Connection, id: &str, now: &str) -> AppResult<Option<Node>> {
-    let mut stmt = conn.prepare(&format!(
-        "UPDATE nodes SET deleted_at = NULL, updated_at = ?2
-         WHERE id = ?1 AND deleted_at IS NOT NULL
-         RETURNING {COLS}"
-    ))?;
-    let node = stmt
-        .query_row(params![id, now], row_to_node)
-        .optional()?;
-    Ok(node)
-}
-
-/// 回收站顶层条目：已删且父节点不存在或未删。
-pub fn trash_items(conn: &Connection) -> AppResult<Vec<TrashItem>> {
-    let nodes = {
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {COLS} FROM nodes n
-             WHERE deleted_at IS NOT NULL AND (
-               parent_id IS NULL
-               OR NOT EXISTS (SELECT 1 FROM nodes p WHERE p.id = n.parent_id AND p.deleted_at IS NOT NULL)
-             )
-             ORDER BY deleted_at DESC"
-        ))?;
-        let rows = stmt.query_map([], row_to_node)?;
-        let mut v = Vec::new();
-        for r in rows {
-            v.push(r?);
-        }
-        v
-    };
-    let mut items = Vec::with_capacity(nodes.len());
-    for node in nodes {
-        let count: i64 = conn.query_row(
-            "WITH RECURSIVE sub(sid) AS (
-                SELECT id FROM nodes WHERE parent_id = ?1
-                UNION ALL
-                SELECT n.id FROM nodes n JOIN sub s ON n.parent_id = s.sid
-             ) SELECT COUNT(*) FROM sub",
-            params![node.id],
-            |r| r.get(0),
-        )?;
-        items.push(TrashItem {
-            node,
-            descendant_count: count,
-        });
-    }
-    Ok(items)
-}
-
-/// 清空回收站（物理删除所有软删节点）。
-pub fn empty_trash(conn: &Connection) -> AppResult<()> {
-    conn.execute("DELETE FROM nodes WHERE deleted_at IS NOT NULL", [])?;
     Ok(())
 }
 
@@ -376,7 +278,9 @@ pub fn children_ids(conn: &Connection, parent: &str) -> AppResult<Vec<String>> {
 pub fn collapse_all(conn: &Connection, collapsed: bool, now: &str) -> AppResult<Vec<Node>> {
     let mut stmt = conn.prepare(&format!(
         "UPDATE nodes SET collapsed = ?1, updated_at = ?2
-         WHERE collapsed != ?1 AND deleted_at IS NULL RETURNING {COLS}"
+         WHERE collapsed != ?1 AND deleted_at IS NULL
+           AND (parent_id IS NOT NULL OR ?1 = 0)
+         RETURNING {COLS}"
     ))?;
     let rows = stmt.query_map(params![collapsed as i64, now], row_to_node)?;
     let mut nodes = Vec::new();

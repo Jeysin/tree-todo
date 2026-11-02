@@ -171,7 +171,8 @@ mod tests {
         let before = queries::ancestors(&tx, parent).unwrap();
         let mut new_id = String::new();
         run_with_history(&tx, before, h, |tx| {
-            let (id, mut upserted) = propagate::create_node(tx, parent, content).unwrap();
+            let (id, mut upserted) =
+                propagate::create_node_at(tx, parent, content, None).unwrap();
             new_id = id.clone();
             upserted.push(queries::get_node(tx, &id).unwrap());
             Ok(Affected {

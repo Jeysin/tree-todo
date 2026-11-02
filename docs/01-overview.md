@@ -43,7 +43,7 @@ tree-todo 的回答就是「树形待办」：
 理由：
 
 1. **资源占用是效率工具的命门**。目标用户是重度效率工具用户，对「一个待办软件吃掉几百 MB 内存、安装包上百 MB」零容忍。Tauri 用系统 WebView + Rust 后端，体积与内存占用比 Electron 低一个数量级。
-2. **脑图渲染的全部生态在 Web 端**（d3-hierarchy、@xyflow/react 等），Tauri 前端层可 100% 复用 React 生态，渲染能力不受限。
+2. **脑图渲染的全部生态在 Web 端**（Mind Elixir 等），Tauri 前端层可 100% 复用 Web 生态，渲染与交互能力不受限。
 3. **Rust 数据层保证状态一致性**。状态自动传播（级联 / 回退）是本项目最核心的领域逻辑，放在 Rust 层可以用类型系统 + 事务保证正确性，且万级节点下性能无忧。
 4. Tauri 2 的 Windows / macOS 支持已充分成熟，无平台风险。
 
@@ -56,8 +56,7 @@ tree-todo 的回答就是「树形待办」：
 | React 19 + TypeScript 5（strict） | UI 框架 | 脑图交互组件生态最丰富 |
 | Vite | 构建器 | Tauri 官方推荐模板 |
 | Zustand 5 | 视图状态管理 | 轻量，适合中型应用 |
-| @xyflow/react 12（react-flow） | 画布基础设施 | 提供 pan / zoom / 节点渲染 / 视口控制 |
-| d3-hierarchy 3 | 树布局算法 | 计算节点坐标，不直接渲染 |
+| mind-elixir 5（本地 fork/补丁） | 脑图交互底座 | 布局、展开/收起、拖拽、折叠角标、平移缩放、键盘导航、内联编辑 |
 | Tailwind CSS 4 | 样式 | 双主题（明 / 暗）成本低 |
 | lucide-react | 图标 | 轻量、风格统一 |
 
@@ -81,7 +80,7 @@ tree-todo 的回答就是「树形待办」：
 ```mermaid
 flowchart TB
     subgraph Frontend["前端（React 视图层）"]
-        TV["树形视图<br/>（脑图画布）"]
+        TV["树形视图<br/>（Mind Elixir 脑图）"]
         FV["平铺视图<br/>（叶子列表）"]
         ST["Zustand Store<br/>（视图状态 + 数据快照）"]
         TV --> ST
@@ -146,8 +145,8 @@ tree-todo/
 |---|---|---|---|
 | D1 | 桌面框架 | Tauri 2（非 Electron） | 本文 §3.1 |
 | D2 | 状态传播模型 | 聚合派生 + 级联开关：非叶子的状态由子节点聚合得出，手动完成/取消对任何节点都生效并级联子孙 | `02-data-model.md` §2 |
-| D3 | 根节点形态 | 多根（每棵树 = 一条任务线），v0.1 单文档 | `02-data-model.md` §3 |
-| D4 | 树渲染方案 | @xyflow/react（画布）+ d3-hierarchy（布局） | `03-feature-design.md` §2 |
+| D3 | 根节点形态 | 单根（每个文档一个根任务；多任务线由多文档承载） | `02-data-model.md` §3 |
+| D4 | 树渲染方案 | Mind Elixir（本地 fork/补丁）：脑图交互全部由其提供，前端只叠加待办状态 | `03-feature-design.md` §2 |
 | D5 | 存储 | SQLite 单文件 + 分数定位排序 | `02-data-model.md` §1 |
 | D6 | IPC 数据流 | 每次操作返回「受影响子树快照」，前端全量受控刷新 | `03-feature-design.md` §6 |
 

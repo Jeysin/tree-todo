@@ -17,15 +17,20 @@ fn now() -> String {
 }
 
 /// 创建节点（C1）：新节点永远 pending（I4）；若父节点原为 done，则父回退 pending（CC1）。
+/// `position` 为 None 时追加到父节点末尾；“插入为兄弟”时指定分数位置。
 ///
 /// 返回 (新节点 id, 向上传播中被修改的祖先列表)。
-pub fn create_node(
+pub fn create_node_at(
     tx: &Transaction,
     parent_id: Option<&str>,
     content: &str,
+    position: Option<f64>,
 ) -> AppResult<(String, Vec<Node>)> {
     let id = uuid::Uuid::new_v4().to_string();
-    let position = queries::next_position(tx, parent_id)?;
+    let position = match position {
+        Some(p) => p,
+        None => queries::next_position(tx, parent_id)?,
+    };
     let ts = now();
     let node = Node {
         id: id.clone(),
@@ -36,12 +41,17 @@ pub fn create_node(
         position,
         collapsed: false,
         created_at: ts.clone(),
-        updated_at: ts,
+        updated_at: ts.clone(),
         deleted_at: None,
         completed_at: None,
     };
     queries::insert_node(tx, &node)?;
-    let changed_ancestors = propagate_upward(tx, parent_id)?;
+    let mut changed_ancestors = propagate_upward(tx, parent_id)?;
+    // 新节点必须可见：若父节点折叠，创建操作同时展开父节点（视图状态，随创建一起撤销）。
+    if let Some(pid) = parent_id {
+        queries::set_collapsed(tx, pid, false, &ts)?;
+        changed_ancestors.push(queries::get_node(tx, pid)?);
+    }
     Ok((id, changed_ancestors))
 }
 
@@ -70,10 +80,13 @@ pub fn uncomplete(tx: &Transaction, id: &str) -> AppResult<Vec<Node>> {
     Ok(affected)
 }
 
-/// 删除节点（D1，v0.3 起为软删除进入回收站）：标记子树 deleted_at，返回被标记 id 列表。
+/// 删除节点（D1）：物理删除整棵子树，返回被删 id 列表。
+///
+/// 节点删除不进回收站；历史记录中的 before 快照仍可撤销恢复。
 pub fn delete_node(tx: &Transaction, id: &str) -> AppResult<(Vec<String>, Vec<Node>)> {
     let node = queries::get_node(tx, id)?;
-    let removed = queries::soft_delete_subtree(tx, id, &now())?;
+    let removed = queries::subtree_ids(tx, id)?;
+    queries::delete_node(tx, id)?;
     let changed = propagate_upward(tx, node.parent_id.as_deref())?;
     Ok((removed, changed))
 }
@@ -205,7 +218,7 @@ mod tests {
 
     fn create(db: &Db, parent: Option<&str>, content: &str) -> String {
         let tx = db.conn.unchecked_transaction().unwrap();
-        let (id, _) = create_node(&tx, parent, content).unwrap();
+        let (id, _) = create_node_at(&tx, parent, content, None).unwrap();
         tx.commit().unwrap();
         id
     }
@@ -387,7 +400,7 @@ mod tests {
         assert_eq!(status(&db, &a), NodeStatus::Pending);
     }
 
-    /// CC6：多根隔离——一条根任务线的完成不影响其他根。
+    /// CC6：内部多根隔离（历史测试；产品已收敛为单根，多任务线由多文档承载）。
     #[test]
     fn t10_cc6_roots_isolated() {
         let db = db();
@@ -533,67 +546,6 @@ mod tests {
         assert!(n.parent_id.is_none(), "B 应成为根节点");
         assert!((n.position - 5000.0).abs() < f64::EPSILON);
         assert_eq!(status(&db, &a), NodeStatus::Pending);
-    }
-
-    /// v0.3 软删除：删除进入回收站，视图不可见，父节点状态重算。
-    #[test]
-    fn t17_soft_delete_goes_to_trash() {
-        let db = db();
-        let p = create(&db, None, "P");
-        let b = create(&db, Some(&p), "B");
-        let c = create(&db, Some(&b), "C");
-        complete(&db, &c); // C done → B done → P done
-        assert_eq!(status(&db, &p), NodeStatus::Done);
-
-        let removed = delete(&db, &b);
-        assert_eq!(removed.len(), 2, "B、C 均被软删除");
-        assert!(queries::get_node(&db.conn, &b).is_err(), "视图不可见");
-        // 物理记录仍在回收站
-        let trash = queries::trash_items(&db.conn).unwrap();
-        assert_eq!(trash.len(), 1);
-        assert_eq!(trash[0].node.id, b);
-        assert_eq!(trash[0].descendant_count, 1, "含 1 个被删子孙");
-        // P 叶子化保持原状态（CC4）
-        assert_eq!(status(&db, &p), NodeStatus::Done);
-    }
-
-    /// v0.3 恢复：子树回归视图，父节点向上传播。
-    #[test]
-    fn t18_restore_from_trash() {
-        let db = db();
-        let p = create(&db, None, "P");
-        let b = create(&db, Some(&p), "B");
-        let _c = create(&db, Some(&b), "C");
-        delete(&db, &b);
-        assert!(queries::get_node(&db.conn, &b).is_err());
-
-        let tx = db.conn.unchecked_transaction().unwrap();
-        let restored = queries::restore_subtree(&tx, &b, "now").unwrap();
-        super::propagate_upward(&tx, Some(&p)).unwrap();
-        tx.commit().unwrap();
-
-        assert_eq!(restored.len(), 2, "B、C 均恢复");
-        assert!(queries::get_node(&db.conn, &b).is_ok());
-        assert!(queries::get_node(&db.conn, &p).is_ok());
-        assert_eq!(status(&db, &p), NodeStatus::Pending, "恢复 pending 子节点后父回退");
-        assert!(queries::trash_items(&db.conn).unwrap().is_empty());
-    }
-
-    /// v0.3 彻底删除：物理移除（含软删子孙）。
-    #[test]
-    fn t19_purge_removes_permanently() {
-        let db = db();
-        let a = create(&db, None, "A");
-        let b = create(&db, Some(&a), "B");
-        let _c = create(&db, Some(&b), "C");
-        delete(&db, &b);
-        assert_eq!(queries::trash_items(&db.conn).unwrap().len(), 1);
-
-        // 物理删除（CASCADE 清理子孙）
-        queries::delete_node(&db.conn, &b).unwrap();
-        assert!(queries::get_node_any(&db.conn, &b).is_err());
-        assert!(queries::get_node_any(&db.conn, &_c).is_err());
-        assert!(queries::trash_items(&db.conn).unwrap().is_empty());
     }
 
     /// v0.3 completed_at：随 status 变更维护（统计面板数据来源）。

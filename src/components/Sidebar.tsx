@@ -1,4 +1,4 @@
-/** 左侧文档边栏（docs/05 M3 多文档）：文档切换 / 新建 / 双击重命名 / 删除，底部回收站入口。 */
+/** 左侧文档边栏（docs/05 M3 多文档）：文档切换 / 新建 / 双击重命名 / 移入回收站，底部回收站入口。 */
 import { useState } from 'react';
 import { FileText, Plus, Trash2 } from 'lucide-react';
 

@@ -24,23 +24,28 @@ pub fn get_tree(state: State<'_, AppState>) -> AppResult<Vec<Node>> {
     queries::all_nodes(&doc.db.conn)
 }
 
-/// 创建节点（C1）：父节点为 None 时创建根。
+/// 创建节点（C1）：父节点为 None 时创建根；`position` 用于“插入为兄弟”保持顺序。
 #[tauri::command]
 pub fn create_node(
     state: State<'_, AppState>,
     parent_id: Option<String>,
     content: String,
+    position: Option<f64>,
 ) -> AppResult<CreateResult> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
     let tx = doc.db.conn.transaction()?;
     if let Some(pid) = parent_id.as_deref() {
         let _ = queries::get_node(&tx, pid)?; // 父不存在 → NodeNotFound
+    } else if queries::root_id(&tx)?.is_some() {
+        // 单根模型：根由数据库保证存在，业务层不再创建第二个根。
+        return Err(crate::error::AppError::RootProtected);
     }
     let before = queries::ancestors(&tx, parent_id.as_deref())?;
     let mut new_id = String::new();
     let mut history = state.history.lock().expect("history mutex poisoned");
     let affected = history::run_with_history(&tx, before, &mut history, |tx| {
-        let (id, mut upserted) = propagate::create_node(tx, parent_id.as_deref(), &content)?;
+        let (id, mut upserted) =
+            propagate::create_node_at(tx, parent_id.as_deref(), &content, position)?;
         new_id = id.clone();
         upserted.push(queries::get_node(tx, &id)?);
         Ok(Affected {
@@ -118,12 +123,15 @@ pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affect
     Ok(affected)
 }
 
-/// 删除节点（D1，v0.3 软删除进入回收站）：返回被删 id 供前端移除快照。
+/// 删除节点（D1）：物理删除整棵子树；根任务不可删除。
 #[tauri::command]
 pub fn delete_node(state: State<'_, AppState>, id: String) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
     let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
+    if node.parent_id.is_none() {
+        return Err(crate::error::AppError::RootProtected);
+    }
     let mut before = queries::subtree_nodes(&tx, &id)?;
     before.extend(queries::ancestors(&tx, node.parent_id.as_deref())?);
     let mut history = state.history.lock().expect("history mutex poisoned");
@@ -146,6 +154,9 @@ pub fn move_node(
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
     let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
+    if node.parent_id.is_none() || new_parent_id.is_none() {
+        return Err(crate::error::AppError::RootProtected);
+    }
     let mut before = vec![node.clone()];
     let mut seen: std::collections::HashSet<String> = before.iter().map(|n| n.id.clone()).collect();
     for chain in [
@@ -179,7 +190,11 @@ pub fn set_collapsed(
 ) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
     let tx = doc.db.conn.transaction()?;
-    queries::set_collapsed(&tx, &id, collapsed, &now())?;
+    let current = queries::get_node(&tx, &id)?;
+    // 根任务在 Mind Elixir 中始终展开，不持久化根折叠。
+    if !(current.parent_id.is_none() && collapsed) {
+        queries::set_collapsed(&tx, &id, collapsed, &now())?;
+    }
     let node = queries::get_node(&tx, &id)?;
     tx.commit()?;
     Ok(Affected {

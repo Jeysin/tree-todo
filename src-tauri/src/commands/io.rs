@@ -71,19 +71,23 @@ pub fn import_json(state: State<'_, AppState>, path: String) -> AppResult<Affect
     }
     let ids_in_doc: HashSet<&str> = doc.nodes.iter().map(|n| n.id.as_str()).collect();
 
-    // 2) 构建节点（parent 不在文件内 → 视为根）
+    // 2) 构建节点：文件内无父的顶层节点，统一挂到当前文档的根任务下（单根模型）
+    let root = queries::root_id(&tx)?;
+    if root.is_none() {
+        return Err(AppError::RootProtected);
+    }
     let mut new_nodes: Vec<Node> = Vec::with_capacity(doc.nodes.len());
-    let mut roots: Vec<String> = Vec::new();
+    let mut import_roots: Vec<String> = Vec::new();
     for n in &doc.nodes {
         let new_id = id_map.get(&n.id).cloned().unwrap_or_else(|| n.id.clone());
         let parent = match n.parent_id.as_deref() {
             Some(p) if ids_in_doc.contains(p) => {
                 Some(id_map.get(p).cloned().unwrap_or_else(|| p.to_string()))
             }
-            _ => None,
+            _ => root.clone(),
         };
-        if parent.is_none() {
-            roots.push(new_id.clone());
+        if parent.as_deref() == root.as_deref() {
+            import_roots.push(new_id.clone());
         }
         let mut node = n.clone().into_node();
         node.id = new_id;
@@ -91,17 +95,21 @@ pub fn import_json(state: State<'_, AppState>, path: String) -> AppResult<Affect
         new_nodes.push(node);
     }
 
-    // 3) 根节点 position 顺延到现有根之后（保持文件内顺序）
-    let mut next = queries::next_position(&tx, None)?;
+    // 3) 顶层导入节点 position 顺延到根任务现有子节点之后
+    let mut next = queries::next_position(&tx, root.as_deref())?;
     for node in new_nodes.iter_mut() {
-        if node.parent_id.is_none() {
+        if import_roots.contains(&node.id) {
             node.position = next;
             next += 1024.0;
         }
     }
 
     // 4) 父先子排序插入 + 状态校正（整个导入记为一次可撤销操作）
-    let before: Vec<Node> = Vec::new();
+    //    根节点状态可能被导入子树改变，因此 before 必须包含根。
+    let before: Vec<Node> = match root.as_deref() {
+        Some(r) => vec![queries::get_node(&tx, r)?],
+        None => Vec::new(),
+    };
     let mut history = state.history.lock().expect("history mutex poisoned");
     let affected = history::run_with_history(&tx, before, &mut history, |tx| {
         history::sort_parents_first(&mut new_nodes);
@@ -110,10 +118,14 @@ pub fn import_json(state: State<'_, AppState>, path: String) -> AppResult<Affect
             queries::upsert_node(tx, n)?;
             upserted.push(n.clone());
         }
-        for r in &roots {
+        if let Some(r) = root.as_deref() {
             upserted.extend(propagate::recompute_subtree(tx, r)?);
+        } else {
+            for r in &import_roots {
+                upserted.extend(propagate::recompute_subtree(tx, r)?);
+            }
         }
-        // 导入的根若 status 与聚合不一致，recompute 已修正；确保返回值包含最新快照
+        // 导入的顶层节点若 status 与聚合不一致，recompute 已修正；确保返回值包含最新快照
         Ok(Affected {
             upserted,
             removed: Vec::new(),

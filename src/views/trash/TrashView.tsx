@@ -1,6 +1,6 @@
-/** 回收站视图（docs/05 M3）：恢复 / 彻底删除 / 清空。 */
+/** 回收站视图（v0.4）：回收对象是文档，节点删除不再进入回收站。 */
 import { useEffect } from 'react';
-import { ArrowLeft, RotateCcw, Trash2 } from 'lucide-react';
+import { ArrowLeft, FileText, RotateCcw, Trash2 } from 'lucide-react';
 
 import { formatDoneTime } from '../../lib/time';
 import { useTodoStore } from '../../stores/todoStore';
@@ -24,7 +24,7 @@ export function TrashView() {
           <div>
             <h1 className="text-lg font-semibold text-primary">回收站</h1>
             <p className="text-xs text-muted mt-1">
-              删除的节点保留在这里，可随时恢复；「彻底删除」后不可恢复
+              删除的文档保留在这里，可随时恢复；「彻底删除」后文档文件不可恢复
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -55,35 +55,29 @@ export function TrashView() {
           <div className="flex flex-col gap-2">
             {trash.map(item => (
               <div
-                key={item.node.id}
+                key={item.id}
                 className="group flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3"
               >
+                <FileText className="w-4 h-4 shrink-0 text-muted" />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-primary truncate">
-                    {item.node.content || '未命名'}
-                    {item.descendantCount > 0 && (
-                      <span className="ml-2 text-xs text-muted">
-                        含 {item.descendantCount} 个子节点
-                      </span>
-                    )}
-                  </div>
+                  <div className="text-sm text-primary truncate">{item.name || '未命名文档'}</div>
                   <div className="text-xs text-muted/70 mt-0.5">
-                    删除于 {formatDoneTime(item.node.deletedAt ?? item.node.updatedAt)}
+                    删除于 {formatDoneTime(item.deletedAt)}
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
-                    onClick={() => void restoreTrash(item.node.id)}
+                    onClick={() => void restoreTrash(item.id)}
                     className="flex items-center gap-1 px-2.5 h-7 rounded-md border border-border text-xs text-primary hover:bg-base transition-colors"
-                    title="恢复到原位置"
+                    title="恢复文档到侧边栏"
                   >
                     <RotateCcw className="w-3 h-3" />
                     恢复
                   </button>
                   <button
-                    onClick={() => void purgeTrash(item.node.id)}
+                    onClick={() => void purgeTrash(item.id)}
                     className="flex items-center gap-1 px-2.5 h-7 rounded-md text-xs text-red-500 hover:bg-red-500/10 transition-colors"
-                    title="彻底删除（不可恢复）"
+                    title="彻底删除文档（不可恢复）"
                   >
                     <Trash2 className="w-3 h-3" />
                     彻底删除
