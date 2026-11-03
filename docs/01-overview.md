@@ -68,6 +68,7 @@ tree-todo 的回答就是「树形待办」：
 | rusqlite（bundled SQLite） | 嵌入式数据库，单文件存储 |
 | serde / serde_json | 序列化（IPC 与导入导出） |
 | uuid | 节点 ID 生成 |
+| tauri-plugin-updater / tauri-plugin-process | 自动更新：检查、下载、Ed25519 验签、安装与重启（`08-auto-update.md`） |
 
 ### 3.4 数据存储
 
@@ -149,6 +150,7 @@ tree-todo/
 | D4 | 树渲染方案 | Mind Elixir（本地 fork/补丁）：脑图交互全部由其提供，前端只叠加待办状态 | `03-feature-design.md` §2 |
 | D5 | 存储 | SQLite 单文件 + 分数定位排序 | `02-data-model.md` §1 |
 | D6 | IPC 数据流 | 每次操作返回「受影响子树快照」，前端全量受控刷新 | `03-feature-design.md` §6 |
+| D7 | 自动更新 | 官方 updater 插件 + GitHub Releases 静态清单 `latest.json`（Ed25519 验签）；macOS 未签名期降级为打开下载页 | `08-auto-update.md` |
 
 ## 7. 非目标（当前版本明确不做）
 

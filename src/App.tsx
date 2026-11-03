@@ -7,8 +7,10 @@ import { ToastContainer } from './components/Toast';
 import { TopBar } from './components/TopBar';
 import { NodeDetailPanel } from './components/NodeDetailPanel';
 import { RunDrawer } from './components/RunDrawer';
+import { UpdateDialog } from './components/UpdateDialog';
 import { initRunEvents, useRunStore } from './stores/runStore';
 import { useTodoStore } from './stores/todoStore';
+import { useUpdateStore } from './stores/updateStore';
 import { FlatView } from './views/flat/FlatView';
 import { SettingsView } from './views/settings/SettingsView';
 import { StatsView } from './views/stats/StatsView';
@@ -44,11 +46,32 @@ function App() {
     const pending = [
       listen('menu:export-all', () => void useTodoStore.getState().exportAll()),
       listen('menu:import', () => void useTodoStore.getState().importBundle(null)),
+      listen('menu:check-update', () => void useUpdateStore.getState().check({ manual: true })),
     ].map(p => p.catch(() => () => {}));
     return () => {
       for (const p of pending) void p.then(unlisten => unlisten());
     };
   }, []);
+
+  // 启动自动检查更新（docs/08 §6.5）：每次启动一次；失败静默；正在编辑节点时延后弹窗。
+  useEffect(() => {
+    if (!loaded || !import.meta.env.PROD) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const run = () => {
+      const el = document.activeElement as HTMLElement | null;
+      const editing =
+        !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      if (editing && attempts < 6) {
+        attempts += 1;
+        timer = setTimeout(run, 15000);
+        return;
+      }
+      void useUpdateStore.getState().check({ manual: false });
+    };
+    timer = setTimeout(run, 3000);
+    return () => clearTimeout(timer);
+  }, [loaded]);
 
   // 全局快捷键：Ctrl/Cmd + 1/2/3 切换视图；Ctrl/Cmd + Z 撤销、Shift+Z / Y 重做
   useEffect(() => {
@@ -109,6 +132,7 @@ function App() {
         </div>
       </div>
       <ToastContainer />
+      <UpdateDialog />
     </>
   );
 }

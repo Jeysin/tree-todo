@@ -34,6 +34,12 @@ import {
 } from './mindmapViewport';
 import { SearchBar } from './SearchBar';
 
+/** 当前选区（多选优先，单选取兜底）：复制 Prompt 一律按选区整体走。 */
+function currentSelection(st: { selectedIds: string[]; selectedId: string | null }): string[] {
+  if (st.selectedIds.length > 0) return st.selectedIds;
+  return st.selectedId ? [st.selectedId] : [];
+}
+
 const THEME: Theme = {
   name: 'tree-todo',
   type: 'light',
@@ -449,6 +455,8 @@ export function MindMapView() {
   const lastSignatureRef = useRef('');
   const skipSyncRef = useRef(false);
   const selectedRef = useRef<string | null>(null);
+  /** 多选集合快照：结构 refresh 后要整体恢复，不能只剩主节点。 */
+  const selectedIdsRef = useRef<string[]>([]);
   /** 当前 mind 实例对应的文档 id（视口读写的归属方）。 */
   const docIdRef = useRef<string | null>(null);
   /** 文档切换时旧树根 id：新数据 refresh 后据此判断「可以按新布局精确恢复视口了」。 */
@@ -462,6 +470,7 @@ export function MindMapView() {
   const childrenOf = useTodoStore(s => s.childrenOf);
   const loaded = useTodoStore(s => s.loaded);
   const selectedId = useTodoStore(s => s.selectedId);
+  const selectedIds = useTodoStore(s => s.selectedIds);
   const currentDocId = useTodoStore(s => s.currentDocId);
   const flashId = useTodoStore(s => s.flashId);
   const revealTarget = useTodoStore(s => s.revealTarget);
@@ -471,6 +480,7 @@ export function MindMapView() {
   const hideDone = useTodoStore(s => s.hideDone);
 
   selectedRef.current = selectedId;
+  selectedIdsRef.current = selectedIds;
 
   const skipSync = useCallback(() => {
     skipSyncRef.current = true;
@@ -532,14 +542,22 @@ export function MindMapView() {
     installMindBehavior(mind, skipSync, onToggle);
 
     mind.bus.addListener('selectNodes', list => {
-      const id = list[0]?.id ?? null;
-      useTodoStore.getState().select(id);
+      // 事件是增量的：框选 / Ctrl 点选只上报本次新增的节点，主节点取本次点中的那个。
+      useTodoStore
+        .getState()
+        .addSelection(
+          list.map(obj => obj.id),
+          list[0]?.id ?? null,
+        );
       // Mind Elixir 选中节点时会把 className 重置成 "selected"，
       // 会抹掉 todo-done / todo-root-topic 等待办视觉；这里立即重新叠加。
       for (const obj of list) {
         const tpc = findTopic(mind, obj.id);
         if (tpc) decorateTopic(tpc, obj, onToggle);
       }
+    });
+    mind.bus.addListener('unselectNodes', list => {
+      useTodoStore.getState().removeSelection(list.map(obj => obj.id));
     });
     mind.bus.addListener('scale', scale => {
       useTodoStore.getState().setZoomPercent(Math.round(scale * 100));
@@ -652,10 +670,16 @@ export function MindMapView() {
       lastSignatureRef.current = sig;
       const data = buildMindElixirData(nodes, roots, childrenOf, readMindColors(), hideDone);
       if (!data) return;
-      const selected = selectedRef.current;
+      const selected = [...selectedIdsRef.current];
       mind.refresh(data);
-      if (selected) {
-        const tpc = findTopic(mind, selected);
+      // refresh 会清空选中态；按快照整体恢复，多选不能退化成单选。
+      if (selected.length > 1) {
+        const tpcs = selected
+          .map(id => findTopic(mind, id))
+          .filter((t): t is TopicWithText => t !== null);
+        if (tpcs.length > 0) mind.selectNodes(tpcs);
+      } else if (selected.length === 1) {
+        const tpc = findTopic(mind, selected[0]);
         if (tpc) mind.selectNode(tpc);
       }
       // 文档切换后的首次 refresh：新树已完成布局，按该文档自己的视口精确定位一次。
@@ -746,17 +770,17 @@ export function MindMapView() {
         return;
       }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'c') {
-        const id = st.selectedId;
-        if (!id) return;
+        const ids = currentSelection(st);
+        if (ids.length === 0) return;
         e.preventDefault();
-        void useRunStore.getState().copyPrompt([id], 'plain');
+        void useRunStore.getState().copyPrompt(ids, 'plain');
         return;
       }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'r') {
-        const id = st.selectedId;
-        if (!id) return;
+        const ids = currentSelection(st);
+        if (ids.length === 0) return;
         e.preventDefault();
-        void useRunStore.getState().copyPrompt([id], 'receipt');
+        void useRunStore.getState().copyPrompt(ids, 'receipt');
         return;
       }
       if (e.altKey && e.key === 'Enter') {
@@ -826,8 +850,18 @@ export function MindMapView() {
     if (!id) return;
     e.preventDefault();
     const st = useTodoStore.getState();
-    if (st.selectedId !== id) st.select(id);
-    setMenu({ x: e.clientX, y: e.clientY, nodeId: id });
+    // 右键点在已选中的节点上 → 保留整个选区（批量复制 Prompt）；
+    // 点在选区外 → 选区收敛到该节点，脑图选中态与 store 一起收敛，避免
+    // 「看到的高亮」和「实际复制的范围」不一致。
+    if (!st.selectedIds.includes(id)) {
+      const mind = mindRef.current;
+      const tpc = mind ? findTopic(mind, id) : null;
+      if (mind && tpc) mind.selectNode(tpc);
+      else st.select(id);
+    }
+    const after = useTodoStore.getState();
+    const nodeIds = after.selectedIds.includes(id) && after.selectedIds.length > 1 ? after.selectedIds : [id];
+    setMenu({ x: e.clientX, y: e.clientY, nodeId: id, nodeIds });
   };
 
   const onMouseDown = (e: React.MouseEvent) => {

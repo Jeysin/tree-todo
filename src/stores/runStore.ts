@@ -70,7 +70,8 @@ export const useRunStore = create<RunState>((set, get) => ({
       const lines = result.prompt.split('\n').length;
       const label = variant === 'receipt' ? '带回执' : '纯文本';
       const suffix = result.reused ? ' · 复用上一轮' : '';
-      st.showToast(`Prompt 已复制（${label}）· ${lines} 行${suffix}`);
+      const scope = result.taskCount > 1 ? ` · ${result.taskCount} 个任务` : '';
+      st.showToast(`Prompt 已复制（${label}）${scope} · ${lines} 行${suffix}`);
       if (variant === 'receipt') {
         await get().loadRuns();
       }

@@ -85,6 +85,8 @@ export interface CopyResult {
   prompt: string;
   runId: string | null;
   reused: boolean;
+  /** 归一化后的任务数（去重 + 剔除祖先已选中的后代后的段数）。 */
+  taskCount: number;
 }
 
 /** MCP 服务配置（设置页展示与一键复制，docs/06 v2 §4.4）。 */
@@ -176,6 +178,10 @@ export interface FolderMeta {
 export interface AppSettings {
   /** 回收站自动清理阈值（天）；0 表示不自动清理。 */
   trashRetentionDays: number;
+  /** 「复制 Prompt」末尾「约束」段的自定义文本（已规整，非空）。 */
+  promptConstraints: string;
+  /** 内置默认约束：设置页「恢复默认」直接用，前端不再复刻文案。 */
+  defaultPromptConstraints: string;
 }
 
 /** 文档索引（documents.json）。 */

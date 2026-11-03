@@ -112,9 +112,11 @@ body {
   position: relative;
 }
 
-/* ── 执行状态徽标（docs/06 §9.4）── */
+/* ── 执行状态徽标（docs/06 §9.4）──
+ * 12px / 行高 16px：与节点正文（14px）拉开层级但保证眯眼也能读清；
+ * 卡片底部按徽标高度预留留白，避免与最后一行文本叠字。 */
 .mind-map-container me-tpc.has-exec {
-  padding-bottom: 16px;
+  padding-bottom: 20px;
 }
 
 .mind-map-container me-tpc.has-exec[data-exec="running"] {
@@ -137,8 +139,8 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
-  line-height: 12px;
+  font-size: 12px;
+  line-height: 16px;
   color: var(--text-muted);
   pointer-events: auto;
   cursor: pointer;
@@ -147,9 +149,9 @@ body {
 .mind-map-container .exec-badge::before {
   content: "";
   display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: 3px;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
   border-radius: 50%;
   vertical-align: middle;
   background: var(--text-muted);

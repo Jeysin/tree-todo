@@ -310,6 +310,10 @@ pub struct DocIndex {
     /// v0.6：回收站自动清理阈值（天）；0 表示不自动清理。
     #[serde(default = "default_trash_retention_days")]
     pub trash_retention_days: u32,
+    /// v0.7：「复制 Prompt」末尾「约束」段的自定义文本（全局，设置页可改）。
+    /// 旧索引没有该字段，default 回落到内置默认约束。
+    #[serde(default = "default_prompt_constraints")]
+    pub prompt_constraints: String,
 }
 
 impl Default for DocIndex {
@@ -322,6 +326,7 @@ impl Default for DocIndex {
             trash: Vec::new(),
             trash_folders: Vec::new(),
             trash_retention_days: default_trash_retention_days(),
+            prompt_constraints: default_prompt_constraints(),
         }
     }
 }
@@ -332,6 +337,10 @@ impl Default for DocIndex {
 pub struct AppSettings {
     /// 回收站自动清理阈值（天）；0 表示不自动清理。
     pub trash_retention_days: u32,
+    /// 「复制 Prompt」末尾「约束」段的自定义文本（已规整，非空）。
+    pub prompt_constraints: String,
+    /// 内置默认约束（设置页「恢复默认」用，前端不再复刻一份文案）。
+    pub default_prompt_constraints: String,
 }
 
 /// 回收站里的目录条目：保留整套目录结构与文档元数据（含原始 id 与父子关系）。
@@ -421,6 +430,9 @@ fn default_index_schema() -> u32 {
 }
 fn default_trash_retention_days() -> u32 {
     30
+}
+fn default_prompt_constraints() -> String {
+    crate::agents::DEFAULT_PROMPT_CONSTRAINTS.to_string()
 }
 
 impl From<&Node> for ImportNode {

@@ -1,7 +1,7 @@
 {
   "name": "tree-todo",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "树形待办 —— 让待办像脑图一样生长",
   "type": "module",
   "scripts": {
@@ -13,6 +13,8 @@
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "lucide-react": "^1.66.0",
     "mind-elixir": "5.15.1",
     "react": "^19.3.1",

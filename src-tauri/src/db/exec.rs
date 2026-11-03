@@ -17,6 +17,21 @@ fn clear(conn: &Connection, node_id: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// 只清空「确实挂在这个 run 上」的投影。
+///
+/// 同一节点可能同时被多个 run 覆盖（例如旧 run 还在等验收、新 run 已经跑起来）：
+/// 收口其中一个 run 时，不能把另一个 run 刚刚写入的执行中 / 待验收徽标一起抹掉。
+fn clear_owned(conn: &Connection, node_id: &str, run_id: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE nodes SET exec_state = 'none', exec_run_id = NULL, exec_agent_id = NULL,
+            exec_agent_name = NULL, exec_started_at = NULL, exec_finished_at = NULL,
+            exec_duration_ms = NULL, exec_needs_confirm = 0, exec_detail = NULL
+         WHERE id = ?1 AND exec_run_id = ?2",
+        params![node_id, run_id],
+    )?;
+    Ok(())
+}
+
 fn write(conn: &Connection, node_id: &str, run_id: &str, exec: &NodeExecution) -> AppResult<()> {
     let detail = serde_json::to_string(&exec.detail).unwrap_or_else(|_| "{}".into());
     conn.execute(
@@ -48,7 +63,7 @@ pub fn sync_run(tx: &Transaction<'_>, run_id: &str) -> AppResult<()> {
     let duration = run.duration_ms;
     for rn in nodes {
         if rn.review != "pending" || matches!(run.status, RunStatus::Reviewed | RunStatus::Cancelled) {
-            clear(tx, &rn.node_id)?;
+            clear_owned(tx, &rn.node_id, run_id)?;
             continue;
         }
         let state = match run.status {
@@ -61,7 +76,7 @@ pub fn sync_run(tx: &Transaction<'_>, run_id: &str) -> AppResult<()> {
             RunStatus::Failed | RunStatus::Blocked | RunStatus::Interrupted => ExecState::Failed,
         };
         if state == ExecState::None {
-            clear(tx, &rn.node_id)?;
+            clear_owned(tx, &rn.node_id, run_id)?;
             continue;
         }
         let reported = if rn.report == "pending" {

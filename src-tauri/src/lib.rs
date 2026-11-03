@@ -20,9 +20,11 @@ use storage::DocStore;
 /// 原生菜单里 File 菜单项的 id（前端监听事件做实际导出/导入）。
 const MENU_EXPORT_ALL: &str = "export_all";
 const MENU_IMPORT: &str = "import_bundle";
+/// 系统菜单里的「检查更新…」（docs/08 §5）。
+const MENU_CHECK_UPDATE: &str = "check_update";
 
-/// 在系统菜单栏的 File 菜单里挂全局「导出全部 / 导入」入口。
-/// macOS 是屏幕顶部菜单栏，Windows / Linux 是窗口菜单。
+/// 在系统菜单栏挂全局入口：File → 导出全部 / 导入；以及「检查更新…」
+/// （macOS 应用名菜单，Windows Help 菜单）。macOS 是屏幕顶部菜单栏，Windows / Linux 是窗口菜单。
 fn install_menu(app: &tauri::App) -> tauri::Result<()> {
     let menu = Menu::default(app.handle())?;
     let export = MenuItem::with_id(
@@ -60,6 +62,31 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
             menu.insert(&sub, index)?;
         }
     }
+    // 检查更新入口（docs/08 §5）：
+    // - macOS：应用名菜单（第一项）里「关于」之后；
+    // - Windows：原生菜单栏没有应用名菜单，放 Help 首项。
+    let check_update = MenuItem::with_id(app, MENU_CHECK_UPDATE, "检查更新…", true, None::<&str>)?;
+    // 用 cfg! 而不是 #[cfg]：让两个平台的分支都参与编译，交叉检查类型。
+    if cfg!(target_os = "macos") {
+        // 默认菜单的第一项就是应用名菜单（About / Services / Quit 所在）。
+        if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
+            app_menu.insert(&check_update, 1)?;
+        }
+    } else {
+        let help = menu.items()?.into_iter().find(|item| match item {
+            MenuItemKind::Submenu(sub) => matches!(sub.text().as_deref(), Ok("Help") | Ok("帮助")),
+            _ => false,
+        });
+        match help {
+            Some(MenuItemKind::Submenu(sub)) => sub.insert(&check_update, 0)?,
+            _ => {
+                let items: [&dyn IsMenuItem<_>; 1] = [&check_update];
+                let sub = Submenu::with_items(app, "Help", true, &items)?;
+                menu.append(&sub)?;
+            }
+        }
+    }
+
     app.set_menu(menu)?;
     Ok(())
 }
@@ -84,6 +111,9 @@ pub struct AppState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // 自动更新（docs/08）：检查 / 下载 / 验签 / 安装，以及安装后的重启。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // 主窗口：从配置移到代码里创建，便于按需追加 WebView2 参数。
             // 验收钩子：设置 TREE_TODO_CDP_PORT 后开启远程调试（仅本机验收用，不设则与默认完全一致）。
@@ -177,6 +207,7 @@ pub fn run() {
             commands::move_document,
             commands::get_settings,
             commands::set_trash_retention_days,
+            commands::set_prompt_constraints,
             commands::delete_folder,
             commands::switch_document,
             commands::get_current_document,
@@ -207,6 +238,9 @@ pub fn run() {
             }
             MENU_IMPORT => {
                 let _ = app.emit("menu:import", ());
+            }
+            MENU_CHECK_UPDATE => {
+                let _ = app.emit("menu:check-update", ());
             }
             _ => {}
         })

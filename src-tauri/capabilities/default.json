@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "主窗口能力：v0.1 仅使用核心 IPC（无任何插件权限）",
+  "description": "主窗口能力：核心 IPC + 文件对话框 + 自动更新（检查/下载/安装）+ 重启",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "updater:default",
+    "process:allow-restart"
+  ]
 }

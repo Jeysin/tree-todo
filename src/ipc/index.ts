@@ -111,6 +111,9 @@ export const ipc = {
   /** 修改回收站保留天数（0 = 不自动清理），并立即清理过期条目。 */
   setTrashRetentionDays: (days: number): Promise<AppSettings> =>
     invoke('set_trash_retention_days', { days }),
+  /** 修改「复制 Prompt」末尾的约束段（每行一条；空文本 = 恢复默认）。 */
+  setPromptConstraints: (text: string): Promise<AppSettings> =>
+    invoke('set_prompt_constraints', { text }),
   /** 应用版本号（用于左上角展示）。 */
   getAppVersion: (): Promise<string> => getVersion(),
   deleteFolder: (id: string): Promise<DocIndex> => invoke('delete_folder', { id }),

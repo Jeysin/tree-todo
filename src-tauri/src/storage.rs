@@ -239,6 +239,7 @@ impl DocStore {
             trash: Vec::new(),
             trash_folders: Vec::new(),
             trash_retention_days: 30,
+            prompt_constraints: crate::agents::DEFAULT_PROMPT_CONSTRAINTS.to_string(),
         };
         self.save_index(&idx)?;
         Ok(idx)
@@ -628,6 +629,20 @@ impl DocStore {
         Ok(days)
     }
 
+    /// 「约束」段的自定义文本；索引里存空串时回落到内置默认。
+    pub fn prompt_constraints(&self) -> AppResult<String> {
+        let stored = self.load_index()?.prompt_constraints;
+        Ok(crate::agents::normalize_constraints(&stored))
+    }
+
+    /// 保存「约束」段。空文本等于恢复默认（约束段不能整段消失）。
+    pub fn set_prompt_constraints(&self, text: &str) -> AppResult<String> {
+        let mut idx = self.load_index()?;
+        idx.prompt_constraints = crate::agents::normalize_constraints(text);
+        self.save_index(&idx)?;
+        Ok(idx.prompt_constraints.clone())
+    }
+
     /// 清理回收站里删除时间超过 `retention_days` 天的内容，返回清理条数。
     /// 时间戳解析失败的条目不清理（宁可保留也不误删）。
     pub fn purge_expired_trash(&self, retention_days: u32) -> AppResult<usize> {
@@ -879,6 +894,7 @@ mod tests {
             trash: Vec::new(),
             trash_folders: Vec::new(),
             trash_retention_days: 30,
+            prompt_constraints: crate::agents::DEFAULT_PROMPT_CONSTRAINTS.to_string(),
         };
         migrate_index(&mut idx);
         assert_eq!(idx.schema_version, INDEX_SCHEMA_VERSION);
@@ -887,6 +903,51 @@ mod tests {
         assert_eq!(idx.documents[0].position, 2048.0);
         // 目录内独立计数。
         assert_eq!(idx.documents[1].position, 1024.0);
+    }
+
+    #[test]
+    fn prompt_constraints_persist_and_reset_to_default() {
+        let (store, dir) = temp_store();
+        store.ensure().unwrap();
+        assert_eq!(
+            store.prompt_constraints().unwrap(),
+            crate::agents::DEFAULT_PROMPT_CONSTRAINTS
+        );
+
+        // 换行符与首尾空行落盘前规整；用户自己写的列表符号保留（渲染时再去掉）。
+        store
+            .set_prompt_constraints("\r\n- 先跑现有测试  \r\n\r\n* 不改依赖\r\n")
+            .unwrap();
+        let reopened = DocStore::new(dir.clone());
+        assert_eq!(reopened.prompt_constraints().unwrap(), "- 先跑现有测试\n* 不改依赖");
+
+        // 空文本 = 恢复默认：约束段永远存在。
+        assert_eq!(
+            reopened.set_prompt_constraints("   ").unwrap(),
+            crate::agents::DEFAULT_PROMPT_CONSTRAINTS
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn legacy_index_without_constraints_reads_default() {
+        let (store, dir) = temp_store();
+        fs::create_dir_all(store.docs_dir()).unwrap();
+        // v3 及更早的 documents.json 没有 promptConstraints 字段。
+        let raw = r#"{
+            "schemaVersion": 3,
+            "documents": [],
+            "folders": [],
+            "lastOpened": null,
+            "trash": [],
+            "trashFolders": [],
+            "trashRetentionDays": 12
+        }"#;
+        fs::write(dir.join("documents.json"), raw).unwrap();
+        let idx = store.load_index().unwrap();
+        assert_eq!(idx.trash_retention_days, 12, "旧字段照常读取");
+        assert_eq!(idx.prompt_constraints, crate::agents::DEFAULT_PROMPT_CONSTRAINTS);
+        cleanup(&dir);
     }
 
     #[test]

@@ -55,7 +55,9 @@
 |---|---|---|---|
 | S-05 | 「复制 Prompt」（`Ctrl+Shift+C`）负向 + 正向 | [x] | 右键实测复制 → 剪贴板 5 项负向断言全过：无节点 ID / 无运行 ID / 无工具名 / 无回执话术 / 无工作区行；正向：含标题「自动更新」/ 文档「产品需求收集」/ 路径「任务线」/ 约束段 |
 | S-06 | 「复制 Prompt（带回执）」（`Ctrl+Shift+R`） | [x] | 剪贴板 795 字节含：节点 ID、运行 ID、start 工具协议（含 `agent_name` 参数示例）、complete 工具协议（含 tasks 参数示例）、降级话术（工具不可用则无需回执）、验收权声明（「任何时候都不要试图替用户完成 / 勾选」）；多选复制共用一个 runId 由单测 `multi_node_shares_one_run` 覆盖 |
-| S-07 | 单测矩阵 | [x] | `plain_variant_has_no_tree_todo_trace`（A 负向）/ `receipt_variant_contains_protocol`（B 正向）/ `note_empty_omitted_and_present_rendered` + `note_over_limit_truncated`（note）/ `children_listed_with_done_marks`（子任务）/ `multi_node_shares_one_run`（多选合并）全部在列且通过 |
+| S-07 | 单测矩阵 | [x] | `plain_variant_has_no_tree_todo_trace`（A 负向）/ `receipt_variant_contains_protocol`（B 正向）/ `note_empty_omitted_and_present_rendered` + `note_over_limit_truncated`（note）/ `subtask_list_keeps_only_actionable_children` + `subtask_section_omitted_when_nothing_left`（子任务过滤）/ `multi_node_shares_one_run`（多选合并）/ `multi_select_follows_tree_order_not_selection_order`、`ancestor_selected_drops_descendant`、`duplicate_selection_ids_collapse`（多选归一化）全部在列且通过 |
+| S-07b | 树形视图多选复制 | [ ] | **待用户实测**：Ctrl/⌘ 点选 A 下的 A1 + B 下的 B2 → `Ctrl+Shift+C` 应得到两段 `# 任务 1/2`（树前序，路径分别为 `根 / A`、`根 / B`）；`Ctrl+Shift+R` 两段共用同一 runId；再叠加选中 A（A1 的父）后复制，A1 不再单独成段 |
+| S-07c | 父节点复制只带待处理子任务 | [ ] | **待用户实测**：父节点下放 4 个子任务（1 个已勾选、1 个待验收、1 个执行中、1 个待处理）→ 复制父节点 Prompt，子任务清单只出现待处理那条；4 条全部完成 / 待验收时整段 `## 子任务` 消失 |
 
 ### C. MCP Server 与二阶段回执
 
@@ -66,7 +68,8 @@
 | S-10 | **start 阶段** | [x] | 真实 run_id 调 `tree_todo_start(agent_name="第二轮-Agent")` → run=running、节点 exec=running、`exec_agent_name` 落库；徽标 0.2s 内亮起 `第二轮-Agent · 执行中 · 0m00s` 且每秒递增（DB 与 UI 双确认） |
 | S-11 | **complete 阶段** | [x] | `tree_todo_complete_tasks` → run=awaiting_review、`duration_ms=2603` 落库（停表）、节点 exec=awaiting_review；**checkbox 未勾选（红线）**；UI 徽标 0.2s 内切换「待验收」 |
 | S-12 | 边界全集 | [x] | 实测：无 start 直接 complete → 接受且无时长（单测 `complete_without_start_accepted_without_duration`）；重复 complete 幂等；收口后再 start 被拒（「该运行已完成并等待验收，不能重新开始」）；`result=failed` → run=failed + 节点红点（单测 `all_non_done_results_mark_run_failed`）；未知 run 拒绝（单测 `unknown_run_and_protocol_errors`）；外来节点拒绝（`foreign_node_rejected`） |
-| S-13 | 复制幂等（D31） | [x] | 实测同节点两次复制返回**同一个** runId（复用）；单测 `copy_idempotency_and_supersede`（running / awaiting 再复制 → 旧 run superseded）+ `expire_dispatched_only_touches_stale`（24h 过期只动过期） |
+| S-13 | 复制幂等（D31） | [x] | 实测同节点两次复制返回**同一个** runId（复用）；单测 `copy_reuses_dispatched_and_running_but_never_touches_inflight`（running 同集合复用，执行态与计时不被清）、`awaiting_review_is_superseded_and_cleared`（待验收不复用，重做才收口）、`superseding_one_run_keeps_another_runs_projection`（收口旧轮不误伤新轮投影）+ `expire_dispatched_only_touches_stale`（24h 过期只动过期） |
+| S-13b | 执行中节点再次复制 Prompt 不掉状态 | [ ] | **待用户实测**：让一个节点进入「执行中」（MCP start）→ 对同一节点再复制（纯文本 / 带回执各一次）→ 徽标仍是「执行中」、计时继续走、`runId` 不变；叶子节点与父节点各测一次 |
 | S-14 | 手动收口 | [x] | running 状态详情侧栏「标记结束」点击 → run=`cancelled`、节点 exec 清空；running 永不自动超时（D33，无任何超时代码路径） |
 
 ### D. 配置与集成

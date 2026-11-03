@@ -49,7 +49,7 @@ Trae / Claude Code / Cursor / 任意 Agent；Agent 开始执行前调 MCP 工具
 | D28 | MCP 服务形态 | **HTTP（Streamable HTTP）**，固定端口 + 持久 token | 用户手配一个 URL 最简单；stdio 需要可执行文件路径，且主应用本就常驻 |
 | D29 | 复制不置节点状态 | 复制「带回执」只建 dispatched run，节点**无任何投影**；Agent 调 start 才亮灯 | 复制是轻动作，可能粘也可能不粘；「执行中」语义必须干净：真的有 Agent 在执行 |
 | D30 | Agent 名称来源 | **配置注入优先，Agent 自报兜底** | 一键复制 MCP 配置时按目标 Agent 注入确定性名称；自报防手写配置场景；模型自报名称可能不标准 |
-| D31 | 复制幂等 | 同一节点集合存在未 start 的 dispatched run 时**复用**；挂 running / awaiting_review 的旧 run 收口 superseded | 防止重复复制堆垃圾账本 |
+| D31 | 复制幂等 | 同集合的 dispatched / running run **复用**（running 只换 prompt，不动计时与状态）；只在集合不一致或挂着 awaiting_review 时收口空闲轮后新建；**running 永不被复制收口** | 防止重复复制堆垃圾账本；复制不能打断正在进行的执行 |
 | D32 | dispatched 过期 | 24h 未 start 自动收口（cancelled · expired） | 账本自洁；节点无投影所以无需通知 |
 | D33 | running 不自动超时 | 执行中状态**永不自动收口**，靠计时展示让人判断 | 长任务合法；用户看到「2h35m」自然会介入，这是 D27 的设计意图 |
 
@@ -292,10 +292,18 @@ D30 的优先来源）。示例：
 - **run 定位**：MCP 层维护内存表 `run_id → doc_id`（复制时注册；启动时扫各文档活跃
   run 重建），不为一次调用遍历所有文档（沿用 v1 §6.3 思路）。
 - **复制幂等（D31）**：复制「带回执」时——
-  - 目标节点集合上挂着 **dispatched**（未 start）的 run 且节点集合一致 → **复用**该
-    run，刷新 prompt 快照与时间戳；
-  - 挂着 **running / awaiting_review** 的 run → 旧 run 收口（cancelled，summary 记
-    `superseded`），建新 run。
+  - 目标节点集合上挂着 **dispatched**（未 start）或 **running**（已 start、Agent 正在做）
+    的 run，且节点集合完全一致 → **复用**该 run：
+    - dispatched：刷新 prompt 快照与 `started_at`（24h 过期计时重来）；
+    - running：**只**刷新 prompt 快照，`started_at` / Agent 名 / 状态一律不动
+      （改时间戳等于重置计时，收口等于清掉执行态）。
+  - 集合不一致，或只挂着 **awaiting_review** 的 run → 先**只收口空闲轮**
+    （`dispatched` / `queued` / `awaiting_review`，summary 记 `superseded`），再建新 run；
+    **`running` 的 run 永远不会被复制收口**——复制是轻动作，不能打断正在进行的执行。
+  - `awaiting_review` 不可复用：它的回执已定稿，复用会让 Agent 的 `start` 被「等待验收」
+    拒绝、`complete` 被当已收口。重新复制即视为重做：旧轮回执作废、节点退回未执行。
+  - 收口只清「确实挂在该 run 上」的节点投影（`exec_run_id` 比对），不会误伤同一节点上
+    另一个 running run 的徽标。
 - **24h 过期（D32）**：后台每小时扫一次，dispatched 超过 24h → cancelled（`expired`）。
   节点无投影，无需 UI 通知。
 - **running 不自动超时（D33）**：见 §3.3。
@@ -319,13 +327,14 @@ tree-todo 痕迹：
 - 文档：{{docName}}
 - 路径：{{ancestorPath}}
 
-## 子任务（全部完成后本任务才算完成）   ← 有子节点才渲染
+## 子任务（全部完成后本任务才算完成）   ← 存在「待处理」子节点才渲染
 - [ ] {{child1.content}}
-- [x] {{child2.content}}               ← 已完成的标 [x]
+- [ ] {{child2.content}}               ← 只列待处理；已完成 / 待验收 / 执行中一律不列
 
-## 约束
+## 约束                                ← 设置页可自定义（见 §9.3）
+{{constraints}}                        ← 一行一条，渲染时统一加「- 」；内置默认如下
 - 只修改与本任务相关的文件；不要执行 `git commit` / `git push`。
-- 不要询问确认性问题；把假设写在最终回复里。
+- 不要询问确认性问题（无人值守）；把假设写在最终回复里。
 - 完成后用不超过 5 行总结做了什么、改了哪些文件。
 ````
 
@@ -358,11 +367,23 @@ tree-todo 痕迹：
    无需回执。
 4. 任何时候都不要试图替用户「完成 / 勾选」任务。
 
-（…约束段同变体 A…）
+（…约束段同变体 A：同一份设置页自定义文本…）
 ````
 
 多选：每个选中节点独立一段 `# 任务 N`（含各自节点 ID），**共用一个 runId**，
 完成协议的 `tasks` 数组列出全部节点（沿用 v1 §5.2 多选规则）。
+
+多选归一化三条（`agents::normalize_selection`，复制与预览共用，Rust 是唯一真相）：
+
+1. **树前序排列**：段序 = 全树 DFS 前序（父先于子、兄弟按 `position`），与脑图阅读
+   顺序一致；与前端点选先后、UUID 字典序无关（`# 任务 N` 可稳定复现）。
+2. **祖先去重**：若某选中节点的祖先也在选区里，该节点**不再单独成段**——它已被祖先
+   段的「子任务」清单覆盖，重复渲染会让 Agent 重复执行、重复回执。
+3. **id 去重**：同一 id 重复传入只渲染一段；归一化后的节点集合同时决定
+   `run_nodes` 与幂等键（`find_dispatched_by_nodes`），三者数量必须一致。
+
+跨兄弟分支选择（如 A 下的 A1 + B 下的 B2）不会做任何分组或关联表达：两段任务各自
+带「路径」行（`根 / A`、`根 / B`），Prompt 层面互不引用。
 
 ### 5.2 组装规则（纯函数，必须单测）
 
@@ -373,9 +394,11 @@ tree-todo 痕迹：
 | note 为空 | 整段省略（不写「无」、不复制标题） |
 | note 上限 | 6000 字符，超出截断并标注 |
 | 祖先路径 | 根到父，` / ` 连接，最多 6 层 |
-| 子节点清单 | 只列直接子节点，上限 150 条，超出标注「还有 N 条未列出」 |
-| 已完成子节点 | 列出并标 `[x]` |
-| 多选 | 每节点一段，共享 runId（仅变体 B） |
+| 子节点清单 | 只列直接子节点中**还需开工**的：待处理且无执行态（或仅 failed）；上限 150 条，超出标注「还有 N 条未列出」（N 只数待处理项） |
+| 已完成子节点 | **不列**（`status = done`） |
+| 待验收 / 执行中子节点 | **不列**（`exec_state ∈ awaiting_review / running / queued`）——已有人在做或已交差，列进新 Prompt 只会重复执行、重复回执 |
+| 多选 | 每节点一段，共享 runId（仅变体 B）；树前序排列 + 祖先已选中的后代不成段 + id 去重 |
+| 约束段 | 设置页自定义（`documents.json` 的 `promptConstraints`，全局共用）：一行一条，渲染统一加 `- `，用户自带的列表符号去掉、空行忽略；空文本回落内置默认；上限 2000 字符 |
 | 变体 A | **不得出现**：节点 ID、runId、工具名、任何「回到 tree-todo」文案（单测断言） |
 | 变体 B | 必须包含：节点 ID、runId、start/complete 工具名与参数示例 |
 
@@ -399,7 +422,7 @@ stateDiagram-v2
     dispatched --> running : MCP start
     dispatched --> cancelled : 24h 过期 / superseded
     running --> awaiting_review : MCP complete（含 done）
-    running --> cancelled : 用户「标记结束」/ superseded
+    running --> cancelled : 用户「标记结束」（复制不会收口执行中的 run）
     awaiting_review --> reviewed : 全部 run_nodes 验收或驳回
     awaiting_review --> cancelled : superseded（再次复制）
     reviewed --> [*]
@@ -424,7 +447,7 @@ v1 的 `failed` / `blocked` / `interrupted` 终态：
 | Agent 忘了 complete（running 卡死） | 计时一直走（设计意图）；用户在详情侧栏「标记结束」→ run cancelled，节点清空（D33） |
 | 节点在 run 期间被用户手动勾选 | complete 到达时照常记录 report；验收时 no-op，不写第二条 history（沿用 v1） |
 | 节点被删除 | 跳过 + warning；同一事务把该节点 pending 的 run_nodes 置 rejected（沿用 v1「删除收口」） |
-| 同节点再次复制（带回执） | 见 D31：dispatched 复用；running / awaiting 收口 superseded 后新建 |
+| 同节点再次复制（带回执） | 见 D31：dispatched / running 同集合复用（running 只换 prompt）；集合不同则只收口空闲轮后新建，执行中的 run 不打断 |
 | complete 的 node id 不在该 run | 拒绝该项并说明 |
 | 24h dispatched 过期 | cancelled（expired），后台每小时扫（D32） |
 
@@ -444,6 +467,9 @@ v1 的 `failed` / `blocked` / `interrupted` 终态：
 
 **停用不删**：`dispatch_prefs` 表、`nodes.exec_needs_confirm` 列（needs_confirmation
 语义依赖「退出码 0 但无回执」，无进程后不复存在）。
+
+**约束文本不进 SQLite**：自定义的「约束」段存在 `documents.json` 的 `promptConstraints`
+（全局共用，缺字段时读内置默认），因此不占文档 schema 版本。
 
 **阶段二升 v5**：`CREATE TABLE run_reports (run_id, node_id?, level, message, created_at)`
 + 索引，走完整迁移框架（备份 / 校验 / 回滚 / fixture）。
@@ -518,8 +544,9 @@ v1 的 `failed` / `blocked` / `interrupted` 终态：
 - 两个复制项**并列顶层**（不再嵌套子菜单）：都是一等公民，点击即复制并 toast
   「Prompt 已复制 · N 行 · 带回执/纯文本」。
 - 节点处于待验收时右键顶部出现「验收通过 / 驳回…」（沿用 v1）。
-- 复制带回执时若目标节点的 dispatch_prefs…… 不存在了——若目标节点挂着活跃 run，
-  按 D31 静默处理，toast 追加「已替代上一轮派发」。
+- 复制带回执时若目标节点挂着**节点集合一致**的 dispatched / running run，按 D31 复用同一个
+  runId（toast 追加「复用上一轮」）；集合不一致时只收口空闲轮再新建，
+  **执行中的 run 不受影响**（徽标与计时保持原样）。
 
 ### 9.2 详情侧栏（执行卡片）
 
@@ -537,10 +564,11 @@ v1 的 `failed` / `blocked` / `interrupted` 终态：
 
 ### 9.3 设置页
 
-删 Agent / 模型 / 派发分组，新增「MCP 集成」：
+删 Agent / 模型 / 派发分组，新增「Prompt」与「MCP 集成」：
 
 | 项 | 说明 |
 |---|---|
+| Prompt 约束 | 「约束」段多行编辑器：每行一条（复制时自动加 `- ` 前缀），[保存约束] / [恢复默认]，右下角字数 `n/2000`；清空后保存 = 恢复默认。与 MCP 配置同页，是因为两者都是「复制 Prompt 前后」的一次性配置 |
 | 服务状态 | 运行中 · `127.0.0.1:39401`（端口被占时红色告警 + 修改框） |
 | 一键复制配置 | 目标 Agent 下拉（Trae / Cursor / Claude Code / Codex / 通用）→ 生成片段 → 复制 |
 | Token | 脱敏显示；[重置 token]（重置后提示更新 Agent 侧配置） |
@@ -549,6 +577,8 @@ v1 的 `failed` / `blocked` / `interrupted` 终态：
 ### 9.4 徽标 / 平铺 / TopBar
 
 - 节点徽标、平铺 chip、待验收置顶与筛选、列头计数：**全部沿用**（P0-08/09 已实测）。
+- 徽标字号 **12px / 行高 16px**（原 10px，实际使用中看不清），节点卡片底部为徽标预留 20px；
+  平铺视图的执行状态 chip 同步到 12px，两个视图读起来是同一套层级。
 - TopBar「执行中 N · 待验收 M」沿用（数据源 `exec_counts` 不变；dispatched 不计数）。
 
 ---
@@ -638,7 +668,7 @@ initialize → tools/list（断言工具清单，断言无验收类工具）
 |---|---|
 | prompt（两变体） | 变体 A 断言**不含**节点 ID / runId / 工具名 /「回到 tree-todo」；变体 B 断言含全部协议要素；note 空 / 非空；子节点超 150；多选合并；变体 A 复制不建 run |
 | 状态机 | dispatched→running→awaiting_review→reviewed 全程；无 start 直接 complete；重复 complete 幂等；收口后拒绝；skipped/failed 全集 → failed 投影 |
-| 复制幂等（D31） | dispatched 复用（同集合）；running / awaiting superseded 收口 + 新建；不同集合不复用 |
+| 复制幂等（D31） | 同集合 dispatched / running 复用（running 只换 prompt、计时不动）；集合不同时只收口空闲轮 + 新建；`running` 不被收口；`awaiting_review` 不复用（收口清投影） |
 | 过期（D32） | dispatched 超 24h → cancelled(expired)；running 永不自动收口（D33 断言） |
 | 鉴权 | 无 token 401；错 token 401；Origin 非 loopback 403 |
 | 红线 | **任何 MCP 调用序列后 `nodes.status` 不变**（穷举 start / complete / report 组合） |
@@ -692,7 +722,7 @@ initialize → tools/list（断言工具清单，断言无验收类工具）
 | R3 | 持久 token 泄露 | 只影响 exec_*（D17）；0600；可重置 |
 | R4 | MCP 各客户端版本差异（Streamable HTTP 支持） | 主流 Agent 已支持；「一键复制」按目标生成；通用片段兜底 |
 | R5 | 复制带回执后用户改了节点内容 | run 的 prompt 快照保留原样（审计语义）；complete 回写的是节点当前状态 |
-| R6 | 多 Agent 同时执行同一节点 | D31 superseded 收口；后到者覆盖前一轮 |
+| R6 | 多 Agent 同时执行同一节点 | 同集合 running 复用同一 run（后到者 start 被幂等忽略、complete 覆盖回执）；集合不同则各自成 run，执行中的一轮不被复制收口 |
 | Q1 | Agent 自报名称的规范（"Claude" vs "Claude Code"） | 配置注入优先（D30）；展示层不做归一化 |
 | Q2 | 网页版 Agent（无 MCP 的）能否闭环 | 不能——走纯文本变体 + 手动勾选；这是设计边界不是缺陷 |
 | Q3 | complete 里 result=skipped 的节点要不要亮黄点 | 暂同 failed 红点；实测后再细分 |

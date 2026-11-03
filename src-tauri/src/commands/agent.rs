@@ -12,7 +12,7 @@ use crate::agents::{self, PromptVariant};
 use crate::db::{exec, queries, runs};
 use crate::error::{AppError, AppResult};
 use crate::history;
-use crate::model::{Affected, Node, RunView};
+use crate::model::{Affected, Node, RunStatus, RunView};
 use crate::AppState;
 
 fn now() -> String {
@@ -36,20 +36,24 @@ fn children_map(all: &[Node]) -> HashMap<String, Vec<String>> {
     map
 }
 
-/// 组装 Prompt 的公共输入：选中节点 + 全节点映射 + 子节点映射 + 文档名。
+/// 组装 Prompt 的公共输入：选中节点 + 全节点映射 + 子节点映射 + 文档名 + 约束段。
 struct PromptInputs {
     selected: Vec<Node>,
     all: HashMap<String, Node>,
     children: HashMap<String, Vec<String>>,
     doc_name: String,
+    /// 设置页自定义的「约束」段（已规整，非空）。
+    constraints: String,
 }
 
-/// 组装 Prompt 的公共部分：选中节点 + 文档名。
+/// 组装 Prompt 的公共部分：选中节点（已归一化）+ 文档名 + 约束。
 fn prompt_inputs(state: &State<'_, AppState>, node_ids: &[String]) -> AppResult<PromptInputs> {
     let doc = state.current.lock().expect("current doc mutex poisoned");
     let all_nodes = queries::all_nodes(&doc.db.conn)?;
     let map: HashMap<String, Node> = all_nodes.iter().cloned().map(|n| (n.id.clone(), n)).collect();
-    let selected: Vec<Node> = node_ids.iter().filter_map(|id| map.get(id).cloned()).collect();
+    let raw: Vec<Node> = node_ids.iter().filter_map(|id| map.get(id).cloned()).collect();
+    // 去重 + 剔除祖先已选中的后代 + 按树前序排列：顺序与「复制几次」都由 Rust 定，前端只报选区。
+    let selected = agents::normalize_selection(&raw, &map);
     if selected.is_empty() {
         return Err(AppError::BadRequest("没有可复制的节点".into()));
     }
@@ -60,7 +64,11 @@ fn prompt_inputs(state: &State<'_, AppState>, node_ids: &[String]) -> AppResult<
         .and_then(|i| i.documents.iter().find(|d| d.id == doc.id))
         .map(|d| d.name.clone())
         .unwrap_or_else(|| "未命名文档".into());
-    Ok(PromptInputs { selected, all: map, children, doc_name })
+    let constraints = idx
+        .as_ref()
+        .map(|i| agents::normalize_constraints(&i.prompt_constraints))
+        .unwrap_or_else(|| agents::DEFAULT_PROMPT_CONSTRAINTS.to_string());
+    Ok(PromptInputs { selected, all: map, children, doc_name, constraints })
 }
 
 /// 「复制 Prompt」的结果：带回执变体携带 run_id（前端 toast 与测试定位用）。
@@ -69,8 +77,10 @@ fn prompt_inputs(state: &State<'_, AppState>, node_ids: &[String]) -> AppResult<
 pub struct CopyResult {
     pub prompt: String,
     pub run_id: Option<String>,
-    /// true = 复用了尚未 start 的 dispatched run（D31 幂等）。
+    /// true = 复用了同集合的 dispatched / running run（D31 幂等，running 只换 prompt 快照）。
     pub reused: bool,
+    /// 归一化后的任务数（前端 toast 提示「几个任务」，与 Prompt 段落数一致）。
+    pub task_count: usize,
 }
 
 /// 复制 Prompt（docs/06 v2 §5.1 两个变体）。
@@ -86,12 +96,13 @@ pub fn copy_prompt(
 ) -> AppResult<CopyResult> {
     let variant = PromptVariant::parse(&variant)
         .ok_or_else(|| AppError::BadRequest(format!("未知变体: {variant}")))?;
-    let mut ids: Vec<String> = node_ids.into_iter().collect();
-    ids.sort();
-    ids.dedup();
+    // 归一化（去重 / 剔后代 / 树序）在 prompt_inputs 里完成；
+    // ids 一律取归一化结果，保证 Prompt 段落数、run_nodes、幂等键三者一致。
+    let inputs = prompt_inputs(&state, &node_ids)?;
+    let ids: Vec<String> = inputs.selected.iter().map(|n| n.id.clone()).collect();
+    let task_count = ids.len();
 
     if variant == PromptVariant::Plain {
-        let inputs = prompt_inputs(&state, &ids)?;
         let prompt = agents::build_prompt(&agents::PromptOptions {
             doc_name: &inputs.doc_name,
             nodes: &inputs.selected,
@@ -99,23 +110,21 @@ pub fn copy_prompt(
             children_of: &inputs.children,
             run_id: None,
             variant,
+            constraints: &inputs.constraints,
         });
-        return Ok(CopyResult { prompt, run_id: None, reused: false });
+        return Ok(CopyResult { prompt, run_id: None, reused: false, task_count });
     }
 
-    // ── 带回执：幂等复用 / supersede / 新建（D31）──
-    let inputs = prompt_inputs(&state, &ids)?;
+    // ── 带回执：复用 / 收口空闲轮 / 新建（D31）──
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
 
-    let reuse = runs::find_dispatched_by_nodes(&doc.db.conn, &ids)?;
-    if reuse.is_none() {
-        // 挂着的 running / awaiting_review 先收口 superseded。
-        let tx = doc.db.conn.transaction()?;
-        runs::supersede_active_runs(&tx, &ids, None)?;
-        tx.commit()?;
-    }
+    // 复用 = 节点集合完全一致的 dispatched / running run。
+    // running 复用只换 prompt 快照：不收口、不重置 started_at ——
+    // 否则「执行中」徽标与计时会被一次复制清掉。
+    let reuse = runs::find_reusable_by_nodes(&doc.db.conn, &ids)?;
     let run_id = reuse
-        .clone()
+        .as_ref()
+        .map(|r| r.id.clone())
         .unwrap_or_else(|| format!("run_{}", uuid::Uuid::new_v4().simple()));
 
     let mode = if ids.len() > 1 { "copy-multi" } else { "copy" };
@@ -126,26 +135,35 @@ pub fn copy_prompt(
         children_of: &inputs.children,
         run_id: Some(&run_id),
         variant,
+        constraints: &inputs.constraints,
     });
 
     let db_path = state.docs.db_path(&doc.id);
+    // 三条路径（复用 / 收口 / 新建）必须在同一事务里，避免中途失败留下半截状态。
+    let tx = doc.db.conn.transaction()?;
     match &reuse {
-        Some(_) => {
-            // 复用：刷新 prompt 快照与时间戳，账本不增行。
-            let tx = doc.db.conn.transaction()?;
+        Some(run) if run.status == RunStatus::Dispatched => {
+            // 还没人接手：刷新快照，并把 24h 过期计时从这次复制重新算。
             tx.execute(
                 "UPDATE runs SET prompt = ?2, started_at = ?3 WHERE id = ?1",
                 rusqlite::params![run_id, prompt, now()],
             )?;
-            tx.commit()?;
+        }
+        Some(_) => {
+            // 执行中：只换 prompt 快照，计时起点 / Agent 名 / 状态一律保持原样。
+            tx.execute(
+                "UPDATE runs SET prompt = ?2 WHERE id = ?1",
+                rusqlite::params![run_id, prompt],
+            )?;
         }
         None => {
+            // 只收口空闲轮（dispatched / awaiting_review）；执行中的 run 绝不打断。
+            runs::supersede_idle_runs(&tx, &ids, None)?;
             let run = runs::new_dispatched_run(&run_id, &prompt, mode);
-            let tx = doc.db.conn.transaction()?;
             runs::insert_run(&tx, &run, &ids)?;
-            tx.commit()?;
         }
     }
+    tx.commit()?;
     drop(doc);
 
     state.runtime.register(&run_id, db_path);
@@ -157,6 +175,7 @@ pub fn copy_prompt(
         prompt,
         run_id: Some(run_id),
         reused: reuse.is_some(),
+        task_count,
     })
 }
 
@@ -177,6 +196,7 @@ pub fn preview_prompt(
         children_of: &inputs.children,
         run_id: None,
         variant,
+        constraints: &inputs.constraints,
     }))
 }
 

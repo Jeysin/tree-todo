@@ -1,10 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FolderCog, Keyboard, Plug, RefreshCw, Sun, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  FolderCog,
+  Keyboard,
+  MessageSquareText,
+  Plug,
+  RefreshCw,
+  Sun,
+  Trash2,
+} from 'lucide-react';
 
 import { ipc } from '../../ipc';
 import type { McpConfig } from '../../ipc/types';
 import { useTodoStore } from '../../stores/todoStore';
 import { useRunStore } from '../../stores/runStore';
+
+/** 约束文本上限（与 Rust `MAX_PROMPT_CONSTRAINTS_CHARS` 保持一致）。 */
+const MAX_CONSTRAINTS_CHARS = 2000;
 
 const THEMES = [
   { value: 'system', label: '跟随系统' },
@@ -43,6 +55,8 @@ export function SettingsView() {
   const theme = useTodoStore(s => s.theme);
   const setTheme = useTodoStore(s => s.setTheme);
   const showToast = useTodoStore(s => s.showToast);
+  const previousViewMode = useTodoStore(s => s.previousViewMode);
+  const setViewMode = useTodoStore(s => s.setViewMode);
   const [purging, setPurging] = useState(false);
   const [mcp, setMcp] = useState<McpConfig | null>(null);
   const [target, setTarget] = useState<(typeof MCP_TARGETS)[number]['id']>('trae');
@@ -50,6 +64,11 @@ export function SettingsView() {
   const [retention, setRetention] = useState<number | null>(null);
   const [retentionDraft, setRetentionDraft] = useState('30');
   const [savingRetention, setSavingRetention] = useState(false);
+  /** Prompt 约束段：已保存值 / 编辑中的草稿 / 内置默认（均由 Rust 提供）。 */
+  const [constraints, setConstraints] = useState('');
+  const [constraintsDraft, setConstraintsDraft] = useState('');
+  const [defaultConstraints, setDefaultConstraints] = useState('');
+  const [savingConstraints, setSavingConstraints] = useState(false);
 
   const loadMcp = async () => {
     try {
@@ -64,6 +83,9 @@ export function SettingsView() {
       const s = await ipc.getSettings();
       setRetention(s.trashRetentionDays);
       setRetentionDraft(String(s.trashRetentionDays));
+      setConstraints(s.promptConstraints);
+      setConstraintsDraft(s.promptConstraints);
+      setDefaultConstraints(s.defaultPromptConstraints);
     } catch (e) {
       showToast((e as { message?: string })?.message ?? '读取设置失败');
     }
@@ -111,6 +133,36 @@ export function SettingsView() {
     return mcpSnippet(mcp, t?.agentName ?? null);
   }, [mcp, target]);
 
+  const constraintChars = Array.from(constraintsDraft).length;
+  const constraintsDirty = constraintsDraft !== constraints;
+
+  const saveConstraints = async (text: string, okText?: string) => {
+    if (Array.from(text).length > MAX_CONSTRAINTS_CHARS) {
+      showToast(`约束最多 ${MAX_CONSTRAINTS_CHARS} 个字符`);
+      return;
+    }
+    setSavingConstraints(true);
+    try {
+      const s = await ipc.setPromptConstraints(text);
+      // 以 Rust 规整后的文本为准（空行会被去掉、空文本回落默认），不留第二份真相。
+      setConstraints(s.promptConstraints);
+      setConstraintsDraft(s.promptConstraints);
+      setDefaultConstraints(s.defaultPromptConstraints);
+      showToast(
+        okText ?? (text.trim() === '' ? '已恢复默认约束' : '约束已保存，下次复制 Prompt 生效'),
+      );
+    } catch (e) {
+      showToast((e as { message?: string })?.message ?? '保存失败');
+    } finally {
+      setSavingConstraints(false);
+    }
+  };
+
+  const restoreConstraints = () => {
+    setConstraintsDraft(defaultConstraints);
+    void saveConstraints(defaultConstraints, '已恢复默认约束');
+  };
+
   const copySnippet = async () => {
     try {
       await ipc.copyText(snippet);
@@ -146,10 +198,19 @@ export function SettingsView() {
   return (
     <div className="absolute inset-0 overflow-y-auto">
       <div className="max-w-2xl mx-auto px-8 py-8 space-y-8">
-        <div>
-          <h1 className="text-lg font-medium text-primary">设置</h1>
-          <p className="text-xs text-muted mt-1">外观、MCP 集成与数据维护。</p>
-        </div>
+        <header className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-medium text-primary">设置</h1>
+            <p className="text-xs text-muted mt-1">外观、Prompt 约束、MCP 集成与数据维护。</p>
+          </div>
+          <button
+            onClick={() => setViewMode(previousViewMode)}
+            className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-border text-[13px] text-primary hover:bg-base transition-colors shrink-0"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            返回
+          </button>
+        </header>
 
         <section>
           <h2 className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -170,6 +231,52 @@ export function SettingsView() {
                 {t.label}
               </button>
             ))}
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <MessageSquareText className="w-3.5 h-3.5" /> Prompt
+          </h2>
+          <div className="rounded-lg border border-border bg-surface px-3 py-3 space-y-2.5">
+            <div className="space-y-1">
+              <div className="text-xs text-primary">「约束」段</div>
+              <p className="text-[11px] text-muted/70 leading-4">
+                复制 Prompt（纯文本 / 带回执）时附在末尾，两个变体共用。每行一条，复制时自动加上「- 」前缀；清空后保存等于恢复默认。
+              </p>
+            </div>
+            <textarea
+              value={constraintsDraft}
+              onChange={e => setConstraintsDraft(e.target.value)}
+              rows={4}
+              spellCheck={false}
+              placeholder="每行一条约束"
+              className="w-full resize-y rounded border border-border bg-base px-2.5 py-2 text-xs leading-5 font-mono text-primary outline-none focus:border-accent"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                disabled={!constraintsDirty || savingConstraints}
+                onClick={() => void saveConstraints(constraintsDraft)}
+                className="h-7 px-2.5 rounded border border-border text-xs text-primary hover:bg-base disabled:opacity-40"
+              >
+                {savingConstraints ? '保存中…' : '保存约束'}
+              </button>
+              <button
+                disabled={savingConstraints || constraints === defaultConstraints}
+                onClick={restoreConstraints}
+                className="h-7 px-2.5 rounded border border-border text-xs text-muted hover:text-primary disabled:opacity-40"
+              >
+                恢复默认
+              </button>
+              <span
+                className={[
+                  'ml-auto text-[11px] tabular-nums',
+                  constraintChars > MAX_CONSTRAINTS_CHARS ? 'text-red-500' : 'text-muted/70',
+                ].join(' ')}
+              >
+                {constraintChars}/{MAX_CONSTRAINTS_CHARS}
+              </span>
+            </div>
           </div>
         </section>
 

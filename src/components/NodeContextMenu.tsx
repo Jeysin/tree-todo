@@ -7,7 +7,14 @@ export interface MenuState {
   x: number;
   y: number;
   nodeId: string;
+  /** 复制 Prompt 的作用范围：右键点在多选内时是整个选区，否则只有 nodeId。 */
+  nodeIds: string[];
 }
+
+/** 菜单宽度（px）：需容下最长项「复制 Prompt（带回执）」+ 快捷键，避免折行。 */
+const MENU_WIDTH = 288;
+/** 单项行高（h-8）+ 分隔线，用于贴边翻转。 */
+const MENU_HEIGHT = 180;
 
 export function NodeContextMenu({ state, onClose }: { state: MenuState | null; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -31,15 +38,16 @@ export function NodeContextMenu({ state, onClose }: { state: MenuState | null; o
   }, [state, onClose]);
 
   if (!state) return null;
-  const x = Math.min(state.x, window.innerWidth - 240);
-  const y = Math.min(state.y, window.innerHeight - 200);
+  const x = Math.min(state.x, window.innerWidth - MENU_WIDTH - 8);
+  const y = Math.min(state.y, window.innerHeight - MENU_HEIGHT - 8);
+  const multi = state.nodeIds.length > 1;
 
   return (
     <div
       ref={ref}
       data-context-menu
-      style={{ left: x, top: y }}
-      className="fixed z-50 w-60 rounded-lg border border-border bg-elevated shadow-xl py-1 text-[13px]"
+      style={{ left: x, top: y, width: MENU_WIDTH }}
+      className="fixed z-50 rounded-lg border border-border bg-elevated shadow-xl py-1 text-[12px] whitespace-nowrap"
       onContextMenu={e => e.preventDefault()}
     >
       <button
@@ -49,40 +57,42 @@ export function NodeContextMenu({ state, onClose }: { state: MenuState | null; o
         }}
         className="w-full flex items-center gap-2 px-3 h-8 text-left text-primary hover:bg-base"
       >
-        <PanelRight className="w-3.5 h-3.5 text-muted" />
-        查看详情
-        <span className="ml-auto text-[11px] text-muted">Alt+Enter</span>
+        <PanelRight className="w-3.5 h-3.5 shrink-0 text-muted" />
+        <span className="min-w-0 truncate">查看详情</span>
+        <span className="ml-auto shrink-0 text-[10.5px] text-muted">Alt+Enter</span>
       </button>
       <div className="my-1 border-t border-border" />
       <button
         onClick={() => {
-          void copyPrompt([state.nodeId], 'plain');
+          void copyPrompt(state.nodeIds, 'plain');
           onClose();
         }}
         className="w-full flex items-center gap-2 px-3 h-8 text-left text-primary hover:bg-base"
       >
-        <ClipboardCopy className="w-3.5 h-3.5 text-muted" />
-        复制 Prompt
-        <span className="ml-auto text-[11px] text-muted">Ctrl+Shift+C</span>
+        <ClipboardCopy className="w-3.5 h-3.5 shrink-0 text-muted" />
+        <span className="min-w-0 truncate">复制 Prompt</span>
+        {multi && <span className="shrink-0 text-[10.5px] text-accent">×{state.nodeIds.length}</span>}
+        <span className="ml-auto shrink-0 text-[10.5px] text-muted">Ctrl+Shift+C</span>
       </button>
       <button
         onClick={() => {
-          void copyPrompt([state.nodeId], 'receipt');
+          void copyPrompt(state.nodeIds, 'receipt');
           onClose();
         }}
         className="w-full flex items-center gap-2 px-3 h-8 text-left text-primary hover:bg-base"
       >
-        <ClipboardCheck className="w-3.5 h-3.5 text-muted" />
-        复制 Prompt（带回执）
-        <span className="ml-auto text-[11px] text-muted">Ctrl+Shift+R</span>
+        <ClipboardCheck className="w-3.5 h-3.5 shrink-0 text-muted" />
+        <span className="min-w-0 truncate">复制 Prompt（带回执）</span>
+        {multi && <span className="shrink-0 text-[10.5px] text-accent">×{state.nodeIds.length}</span>}
+        <span className="ml-auto shrink-0 text-[10.5px] text-muted">Ctrl+Shift+R</span>
       </button>
       <div className="my-1 border-t border-border" />
       <button
         onClick={onClose}
         className="w-full flex items-center gap-2 px-3 h-8 text-left text-muted hover:bg-base"
       >
-        <X className="w-3.5 h-3.5" />
-        关闭
+        <X className="w-3.5 h-3.5 shrink-0" />
+        <span className="min-w-0 truncate">关闭</span>
       </button>
     </div>
   );

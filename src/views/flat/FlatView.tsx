@@ -52,7 +52,7 @@ function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string)
       {!done && exec && (
         <span
           className={[
-            'shrink-0 text-[11px] tabular-nums px-1.5 h-5 rounded-full inline-flex items-center',
+            'shrink-0 text-xs tabular-nums px-2 h-6 rounded-full inline-flex items-center',
             exec.state === 'running'
               ? 'text-accent bg-accent/10'
               : exec.state === 'awaiting_review'

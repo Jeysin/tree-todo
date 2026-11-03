@@ -97,8 +97,12 @@ interface TodoState {
 
   // ── 视图状态 ──
   viewMode: ViewMode;
+  /** 进入设置页之前所在的视图（设置页「返回」按钮用）。 */
+  previousViewMode: ViewMode;
   theme: Theme;
   selectedId: string | null;
+  /** 多选集合（树形视图 Ctrl/⌘ 点选、Shift 范围选、框选）；selectedId 是其中的主节点。 */
+  selectedIds: string[];
   flashId: string | null;
   revealTarget: RevealTarget | null;
   /** 外部入口（TopBar）发起的新建请求，由 MindMapView 消费。 */
@@ -142,6 +146,10 @@ interface TodoState {
   emptyTrash: () => Promise<void>;
   // 视图
   select: (id: string | null) => void;
+  /** 多选增量同步（Mind Elixir 的 selectNodes 事件只上报新增节点）。 */
+  addSelection: (ids: string[], primary?: string | null) => void;
+  /** 多选增量移除（unselectNodes / 取消勾选 / 清空选区）。 */
+  removeSelection: (ids: string[]) => void;
   setViewMode: (m: ViewMode) => void;
   setTheme: (t: Theme) => void;
   setSearchOpen: (open: boolean) => void;
@@ -193,8 +201,10 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   trash: [],
 
   viewMode: 'tree',
+  previousViewMode: 'tree',
   theme: initialTheme(),
   selectedId: null,
+  selectedIds: [],
   flashId: null,
   revealTarget: null,
   createRequest: null,
@@ -211,15 +221,20 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   },
 
   applyAffected(af) {
-    const { nodes, selectedId } = get();
+    const { nodes, selectedId, selectedIds } = get();
     const next = { ...nodes };
     for (const n of af.upserted) next[n.id] = n;
     for (const id of af.removed) delete next[id];
-    const selectedGone = selectedId !== null && !next[selectedId];
+    // 多选集合里被删掉的节点就地剔除；主节点没了就顺延到剩下的最后一个。
+    const alive = selectedIds.filter(id => next[id]);
+    const primary = selectedId && next[selectedId] ? selectedId : (alive[alive.length - 1] ?? null);
+    const selectedGone = selectedId !== null && primary === null;
     set({
       nodes: next,
       ...rebuildIndex(next),
-      ...(selectedGone ? { selectedId: null, flashId: null } : {}),
+      ...(alive.length !== selectedIds.length || primary !== selectedId
+        ? { selectedId: primary, selectedIds: alive, ...(selectedGone ? { flashId: null } : {}) }
+        : {}),
     });
   },
 
@@ -266,6 +281,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     set({
       viewMode: 'tree',
       selectedId: id,
+      selectedIds: [id],
       flashId: id,
       revealTarget: { id, ts: Date.now() },
     });
@@ -404,6 +420,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
       set({
         currentDocId: id,
         selectedId: null,
+        selectedIds: [],
         flashId: null,
         viewMode: 'tree',
         hideDone: readHideDone(id),
@@ -486,6 +503,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
         folders: idx.folders ?? [],
         currentDocId: next,
         selectedId: null,
+        selectedIds: [],
         flashId: null,
         hideDone: readHideDone(next),
       });
@@ -517,6 +535,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
         folders: idx.folders ?? [],
         currentDocId: next,
         selectedId: null,
+        selectedIds: [],
         flashId: null,
         hideDone: readHideDone(next),
       });
@@ -582,10 +601,38 @@ export const useTodoStore = create<TodoState>((set, get) => ({
 
   // ── 视图 ──
   select(id) {
-    set({ selectedId: id });
+    set({ selectedId: id, selectedIds: id ? [id] : [] });
+  },
+  addSelection(ids, primary) {
+    if (ids.length === 0) return;
+    const { selectedIds, selectedId } = get();
+    const merged = [...selectedIds];
+    for (const id of ids) if (!merged.includes(id)) merged.push(id);
+    set({
+      selectedIds: merged,
+      // 主节点跟着最新一次点选走；纯框选（无 primary）时保留原主节点。
+      selectedId: primary ?? selectedId ?? merged[merged.length - 1] ?? null,
+    });
+  },
+  removeSelection(ids) {
+    if (ids.length === 0) return;
+    const gone = new Set(ids);
+    const { selectedIds, selectedId } = get();
+    const alive = selectedIds.filter(id => !gone.has(id));
+    if (alive.length === selectedIds.length) return;
+    set({
+      selectedIds: alive,
+      selectedId: selectedId && gone.has(selectedId) ? (alive[alive.length - 1] ?? null) : selectedId,
+    });
   },
   setViewMode(m) {
-    set({ viewMode: m, ...(m !== 'tree' ? { searchOpen: false } : {}) });
+    const { viewMode } = get();
+    set({
+      viewMode: m,
+      // 记住进入设置页之前的视图，供设置页「返回」回到原页面
+      ...(m === 'settings' && viewMode !== 'settings' ? { previousViewMode: viewMode } : {}),
+      ...(m !== 'tree' ? { searchOpen: false } : {}),
+    });
   },
   setTheme(t) {
     applyTheme(t);

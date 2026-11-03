@@ -125,35 +125,48 @@ pub fn new_dispatched_run(run_id: &str, prompt: &str, mode: &str) -> Run {
     }
 }
 
-/// 复制幂等（D31）：节点集合完全一致的 dispatched run 可复用（还没被 start）。
-pub fn find_dispatched_by_nodes(
-    conn: &Connection,
-    node_ids: &[String],
-) -> AppResult<Option<String>> {
+/// 复制幂等（D31）：节点集合完全一致、且仍可接手的 run 直接复用。
+///
+/// 只认两种状态：
+/// - `dispatched`：还没被 Agent 接手，复用后刷新 prompt 与 `started_at`（24h 过期计时重来）；
+/// - `running`：Agent 正在做，复用后**只**刷新 prompt —— 不能碰 `started_at`（等于重置计时），
+///   更不能收口（等于把「执行中」徽标连同执行态一起清掉）。
+///
+/// `awaiting_review` 故意不在此列：它的回执已定稿，再复制意味着重做，必须换一个新 run；
+/// 复用会让 Agent 的 `start` 被「等待验收」拒绝、`complete` 被当已收口，直接卡死。
+pub fn find_reusable_by_nodes(conn: &Connection, node_ids: &[String]) -> AppResult<Option<Run>> {
     if node_ids.is_empty() {
         return Ok(None);
     }
     let placeholders = node_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!(
         "SELECT r.id FROM runs r
-         WHERE r.status = 'dispatched'
+         WHERE r.status IN ('dispatched','running')
            AND (SELECT COUNT(*) FROM run_nodes rn WHERE rn.run_id = r.id) = {n}
            AND {n} = (SELECT COUNT(*) FROM run_nodes rn WHERE rn.run_id = r.id AND rn.node_id IN ({placeholders}))
-         ORDER BY r.started_at DESC LIMIT 1",
+         ORDER BY CASE r.status WHEN 'running' THEN 0 ELSE 1 END, r.started_at DESC LIMIT 1",
         n = node_ids.len(),
     );
     let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
     for id in node_ids {
         params.push(id);
     }
-    Ok(conn
+    let id: Option<String> = conn
         .query_row(&sql, params.as_slice(), |r| r.get(0))
-        .optional()?)
+        .optional()?;
+    match id {
+        Some(id) => Ok(Some(get_run(conn, &id)?)),
+        None => Ok(None),
+    }
 }
 
-/// 把指定节点名下所有活跃 run 收口为 cancelled·superseded（D31：新一轮复制替代旧轮）。
+/// 把指定节点名下**空闲**的活跃 run 收口为 cancelled·superseded（D31：新一轮复制替代旧轮）。
+///
+/// `running` 一律不动：复制 Prompt 是轻动作，不能打断正在进行的执行。
+/// 只收口 `dispatched`（无人接手、无投影）、`queued`（历史值）与 `awaiting_review`
+/// （回执已定稿，被新一轮替代）。
 /// `except_run` 里的 run 不动（复用场景）。
-pub fn supersede_active_runs(
+pub fn supersede_idle_runs(
     tx: &Transaction<'_>,
     node_ids: &[String],
     except_run: Option<&str>,
@@ -164,7 +177,7 @@ pub fn supersede_active_runs(
         let ids: Vec<String> = {
             let mut stmt = tx.prepare(
                 "SELECT DISTINCT r.id FROM runs r JOIN run_nodes rn ON rn.run_id = r.id
-                 WHERE rn.node_id = ?1 AND r.status IN ('dispatched','queued','running','awaiting_review')",
+                 WHERE rn.node_id = ?1 AND r.status IN ('dispatched','queued','awaiting_review')",
             )?;
             let rows = stmt.query_map(params![node_id], |r| r.get(0))?;
             rows.collect::<Result<Vec<_>, _>>()?
@@ -176,10 +189,11 @@ pub fn supersede_active_runs(
             tx.execute(
                 "UPDATE runs SET status = 'cancelled', summary = 'superseded',
                     finished_at = COALESCE(finished_at, ?2), error = NULL
-                 WHERE id = ?1 AND status IN ('dispatched','queued','running','awaiting_review')",
+                 WHERE id = ?1 AND status IN ('dispatched','queued','awaiting_review')",
                 params![run_id, now],
             )?;
-            // 被替代节点的待验收投影要清掉；未 start 的 dispatched 本来就无投影。
+            // 被替代节点的待验收投影要清掉；只清「确实属于这个 run」的投影，
+            // 避免顺手把同一节点上另一个 running run 的徽标一起抹掉。
             exec::sync_run(tx, &run_id)?;
             superseded.push(run_id);
         }
@@ -460,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_idempotency_and_supersede() {
+    fn copy_reuses_dispatched_and_running_but_never_touches_inflight() {
         let mut db = Db::open_in_memory().unwrap();
         let node_id = seed(&mut db);
 
@@ -472,28 +486,92 @@ mod tests {
 
         // 同节点集合再复制 → 复用（D31）
         assert_eq!(
-            find_dispatched_by_nodes(&db.conn, std::slice::from_ref(&node_id)).unwrap(),
+            find_reusable_by_nodes(&db.conn, std::slice::from_ref(&node_id))
+                .unwrap()
+                .map(|r| r.id),
             Some("run_a".into())
         );
 
-        // Agent start 后节点挂 running → 再复制不再复用，且旧 run 被 supersede
+        // Agent start 后节点挂 running → 仍可复用，且不再被收口
         let tx = db.conn.transaction().unwrap();
         tx.execute("UPDATE runs SET status = 'running' WHERE id = 'run_a'", []).unwrap();
         exec::sync_run(&tx, "run_a").unwrap();
         tx.commit().unwrap();
-        assert_eq!(
-            find_dispatched_by_nodes(&db.conn, std::slice::from_ref(&node_id)).unwrap(),
-            None,
-            "running 的 run 不可复用"
-        );
+
+        let reusable = find_reusable_by_nodes(&db.conn, std::slice::from_ref(&node_id))
+            .unwrap()
+            .expect("running 的 run 可复用");
+        assert_eq!(reusable.status, RunStatus::Running);
 
         let tx = db.conn.transaction().unwrap();
-        let superseded = supersede_active_runs(&tx, std::slice::from_ref(&node_id), None).unwrap();
+        let superseded = supersede_idle_runs(&tx, std::slice::from_ref(&node_id), None).unwrap();
         tx.commit().unwrap();
-        assert_eq!(superseded, vec!["run_a".to_string()]);
-        assert_eq!(get_run(&db.conn, "run_a").unwrap().status, RunStatus::Cancelled);
-        // 节点投影随 supersede 清空
+        assert!(superseded.is_empty(), "执行中的 run 不得被复制收口");
+        assert_eq!(get_run(&db.conn, "run_a").unwrap().status, RunStatus::Running);
+        let exec_now = queries::get_node(&db.conn, &node_id).unwrap().execution;
+        assert_eq!(
+            exec_now.map(|e| e.state),
+            Some(ExecState::Running),
+            "执行态与计时不得被复制清空"
+        );
+    }
+
+    #[test]
+    fn awaiting_review_is_superseded_and_cleared() {
+        let mut db = Db::open_in_memory().unwrap();
+        let node_id = seed(&mut db);
+        let run = new_dispatched_run("run_r", "prompt", "copy");
+        let tx = db.conn.transaction().unwrap();
+        insert_run(&tx, &run, std::slice::from_ref(&node_id)).unwrap();
+        tx.execute("UPDATE runs SET status = 'awaiting_review' WHERE id = 'run_r'", []).unwrap();
+        exec::sync_run(&tx, "run_r").unwrap();
+        tx.commit().unwrap();
+        assert_eq!(
+            queries::get_node(&db.conn, &node_id).unwrap().execution.map(|e| e.state),
+            Some(ExecState::AwaitingReview)
+        );
+
+        // 回执已定稿 → 不复用（复用会让 Agent 的 start / complete 全被拒）
+        assert!(
+            find_reusable_by_nodes(&db.conn, std::slice::from_ref(&node_id)).unwrap().is_none(),
+            "awaiting_review 不可复用"
+        );
+
+        // 重新复制 = 重做：旧轮收口，投影清空
+        let tx = db.conn.transaction().unwrap();
+        let superseded = supersede_idle_runs(&tx, std::slice::from_ref(&node_id), None).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(superseded, vec!["run_r".to_string()]);
+        assert_eq!(get_run(&db.conn, "run_r").unwrap().status, RunStatus::Cancelled);
         assert!(queries::get_node(&db.conn, &node_id).unwrap().execution.is_none());
+    }
+
+    #[test]
+    fn superseding_one_run_keeps_another_runs_projection() {
+        let mut db = Db::open_in_memory().unwrap();
+        let node_id = seed(&mut db);
+        // 旧轮：待验收；新轮：执行中（同一节点被两个 run 覆盖）
+        for id in ["run_old", "run_new"] {
+            let run = new_dispatched_run(id, "prompt", "copy");
+            let tx = db.conn.transaction().unwrap();
+            insert_run(&tx, &run, std::slice::from_ref(&node_id)).unwrap();
+            tx.commit().unwrap();
+        }
+        let tx = db.conn.transaction().unwrap();
+        tx.execute("UPDATE runs SET status = 'awaiting_review' WHERE id = 'run_old'", []).unwrap();
+        exec::sync_run(&tx, "run_old").unwrap();
+        tx.execute("UPDATE runs SET status = 'running' WHERE id = 'run_new'", []).unwrap();
+        exec::sync_run(&tx, "run_new").unwrap();
+        tx.commit().unwrap();
+
+        // 收口旧轮：只能清自己的投影，不能把新轮的「执行中」一起抹掉
+        let tx = db.conn.transaction().unwrap();
+        supersede_idle_runs(&tx, std::slice::from_ref(&node_id), None).unwrap();
+        tx.commit().unwrap();
+        let exec_now = queries::get_node(&db.conn, &node_id).unwrap().execution;
+        let exec_now = exec_now.expect("新轮的执行态必须保留");
+        assert_eq!(exec_now.state, ExecState::Running);
+        assert_eq!(exec_now.run_id.as_deref(), Some("run_new"));
     }
 
     #[test]

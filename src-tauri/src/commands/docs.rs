@@ -66,12 +66,19 @@ pub fn move_folder(
     state.docs.move_folder(&id, parent_id, position)
 }
 
+/// 设置页快照：回收站阈值 + Prompt 约束（含内置默认，供「恢复默认」用）。
+fn settings_snapshot(state: &State<'_, AppState>) -> AppResult<AppSettings> {
+    Ok(AppSettings {
+        trash_retention_days: state.docs.trash_retention_days()?,
+        prompt_constraints: state.docs.prompt_constraints()?,
+        default_prompt_constraints: crate::agents::DEFAULT_PROMPT_CONSTRAINTS.to_string(),
+    })
+}
+
 /// 应用设置（设置页读取）。
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> AppResult<AppSettings> {
-    Ok(AppSettings {
-        trash_retention_days: state.docs.trash_retention_days()?,
-    })
+    settings_snapshot(&state)
 }
 
 /// 修改回收站保留天数并立即清理过期条目（0 = 不自动清理）。
@@ -85,9 +92,27 @@ pub fn set_trash_retention_days(
     }
     state.docs.set_trash_retention_days(days)?;
     state.docs.purge_expired_trash(days)?;
-    Ok(AppSettings {
-        trash_retention_days: days,
-    })
+    settings_snapshot(&state)
+}
+
+/// 修改「复制 Prompt」末尾的约束段（docs/06 §5.1）。
+///
+/// 空文本 = 恢复默认：约束段永远存在，用户改的是内容而不是「有没有」。
+/// 每行一条，渲染时统一加 `- ` 前缀；用户自己写的列表符号会被去掉。
+#[tauri::command]
+pub fn set_prompt_constraints(
+    state: State<'_, AppState>,
+    text: String,
+) -> AppResult<AppSettings> {
+    let count = text.chars().count();
+    if count > crate::agents::MAX_PROMPT_CONSTRAINTS_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "约束最多 {} 个字符（当前 {count}）",
+            crate::agents::MAX_PROMPT_CONSTRAINTS_CHARS
+        )));
+    }
+    state.docs.set_prompt_constraints(&text)?;
+    settings_snapshot(&state)
 }
 
 /// 删除目录：目录与子目录移除，里面的文档移入回收站（可恢复）。

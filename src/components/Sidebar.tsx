@@ -1,7 +1,7 @@
 /**
  * 左侧文档边栏（docs/05 M3 / v0.5 / v0.6）：
  * - 目录层级树：目录可嵌套，目录下可新建目录 / 文档；
- * - 拖拽调整同级顺序，或拖进 / 拖出目录；
+ * - 拖拽调整同级顺序、拖进 / 拖出目录，拖到空白处回到根层级末尾；
  * - 右键菜单：新建、导出、导入、重命名、删除；空白处右键可新建；
  * - 宽度可拖拽并记忆（localStorage）。
  */
@@ -16,6 +16,7 @@ import {
   FolderInput,
   FolderOpen,
   FolderPlus,
+  Loader2,
   Pencil,
   Plus,
   Settings,
@@ -26,6 +27,7 @@ import {
 import { AppIcon } from './AppIcon';
 import { ipc } from '../ipc';
 import { useTodoStore } from '../stores/todoStore';
+import { useUpdateStore } from '../stores/updateStore';
 import type { DocMeta, FolderMeta } from '../ipc/types';
 
 const WIDTH_KEY = 'tree-todo.sidebarWidth';
@@ -75,12 +77,10 @@ interface TreeRow {
   doc?: DocMeta;
 }
 
-/** 拖拽落点：行上方 / 行下方 / 拖进目录。 */
-interface DropTarget {
-  kind: ItemKind;
-  id: string;
-  zone: 'before' | 'after' | 'into';
-}
+/** 拖拽落点：行上方 / 行下方 / 拖进目录 / 列表空白（回根层级末尾）。 */
+type DropTarget =
+  | { kind: ItemKind; id: string; zone: 'before' | 'after' | 'into' }
+  | { kind: 'root' };
 
 type MenuState =
   | { x: number; y: number; kind: 'folder'; id: string; name: string }
@@ -128,6 +128,8 @@ export function Sidebar() {
   const exportFolder = useTodoStore(s => s.exportFolder);
   const importBundle = useTodoStore(s => s.importBundle);
   const setViewMode = useTodoStore(s => s.setViewMode);
+  const updatePhase = useUpdateStore(s => s.phase);
+  const checkUpdate = useUpdateStore(s => s.check);
 
   const [width, setWidth] = useState(readWidth);
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
@@ -138,7 +140,7 @@ export function Sidebar() {
   /** 侧边栏里当前选中的目录或文档（单击切换，互斥）。 */
   const [selection, setSelection] = useState<Selection>(null);
   const [addMenu, setAddMenu] = useState(false);
-  /** 拖拽源 / 当前落点（HTML5 拖拽，用于排序与换目录）。 */
+  /** 拖拽源 / 当前落点（指针拖拽，用于排序与换目录）。 */
   const [drag, setDrag] = useState<{ kind: ItemKind; id: string } | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [version, setVersion] = useState('');
@@ -146,9 +148,31 @@ export function Sidebar() {
   const widthRef = useRef(width);
   const menuRef = useRef<HTMLDivElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
+  /** 按下但还没越过阈值的候选拖拽（越过 4px 才真正开始拖）。 */
+  const pendingDragRef = useRef<{
+    kind: ItemKind;
+    id: string;
+    name: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const draggingRef = useRef(false);
+  const dropTargetRef = useRef<DropTarget | null>(null);
+  /** 拖拽结束后紧随的那次 click 要吞掉，避免误切文档 / 误清选中。 */
+  const suppressClickRef = useRef(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  /** 悬停在折叠目录中部时的自动展开定时器。 */
+  const hoverExpandRef = useRef<{ id: string; timer: number } | null>(null);
+  /** window 级指针监听只注册一次，通过 ref 调用最新的处理逻辑。 */
+  const pointerApiRef = useRef<{
+    move: (e: PointerEvent) => void;
+    finish: (apply: boolean) => void;
+  }>({ move: () => {}, finish: () => {} });
   /** Esc 取消重命名时，随后的 blur 不应再提交。 */
   const cancelRenameRef = useRef(false);
   widthRef.current = width;
+  dropTargetRef.current = dropTarget;
 
   /** 每个父级下目录与文档合并排序后的条目（v0.6：共享 position 坐标）。 */
   const siblingsByParent = useMemo(() => {
@@ -520,53 +544,193 @@ export function Sidebar() {
     return next ? (target.position + next.position) / 2 : target.position + 1024;
   };
 
-  const handleDragStart = (e: React.DragEvent, row: TreeRow) => {
-    if (editing) return;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', row.id);
-    setDrag({ kind: row.kind, id: row.id });
-    setMenu(null);
-    setAddMenu(false);
+  /** 空白处落点 = 根层级末尾。 */
+  const rootEndPosition = (): number => {
+    const list = siblingsByParent.get(null) ?? [];
+    return list.reduce((acc, e) => Math.max(acc, e.position), 0) + 1024;
   };
 
-  const handleDragOver = (e: React.DragEvent, row: TreeRow) => {
-    if (!drag) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = (e.clientY - rect.top) / Math.max(1, rect.height);
-    let zone: 'before' | 'after' | 'into';
-    if (row.kind === 'folder') {
-      zone = ratio < 0.28 ? 'before' : ratio > 0.72 ? 'after' : 'into';
-    } else {
-      zone = ratio < 0.5 ? 'before' : 'after';
-    }
-    if (!canDrop(drag, row, zone)) {
-      setDropTarget(null);
-      return;
-    }
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDropTarget(prev =>
-      prev && prev.kind === row.kind && prev.id === row.id && prev.zone === zone
-        ? prev
-        : { kind: row.kind, id: row.id, zone },
-    );
+  const sameTarget = (a: DropTarget | null, b: DropTarget | null): boolean => {
+    if (!a || !b) return a === b;
+    if (a.kind === 'root' || b.kind === 'root') return a.kind === b.kind;
+    return a.kind === b.kind && a.id === b.id && a.zone === b.zone;
   };
 
-  const handleDrop = (e: React.DragEvent, row: TreeRow) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const source = drag;
-    const target = dropTarget;
+  /** 指针坐标 → 落点（行上方 / 行下方 / 目录中部 / 列表空白）。 */
+  const hitTest = (
+    x: number,
+    y: number,
+    source: { kind: ItemKind; id: string },
+  ): DropTarget | null => {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    const rowEl = el?.closest<HTMLElement>('[data-sidebar-row]');
+    if (rowEl) {
+      const kind = rowEl.dataset.kind as ItemKind | undefined;
+      const id = rowEl.dataset.id;
+      if (!kind || !id) return null;
+      const rect = rowEl.getBoundingClientRect();
+      const ratio = (y - rect.top) / Math.max(1, rect.height);
+      const zone: 'before' | 'after' | 'into' =
+        kind === 'folder'
+          ? ratio < 0.3
+            ? 'before'
+            : ratio > 0.7
+              ? 'after'
+              : 'into'
+          : ratio < 0.5
+            ? 'before'
+            : 'after';
+      const row = tree.find(r => r.kind === kind && r.id === id);
+      if (!row || !canDrop(source, row, zone)) return null;
+      return { kind, id, zone };
+    }
+    // 列表内的空白：把条目拖回根层级末尾（也是「拖出目录」最顺手的方式）。
+    if (el && scrollRef.current?.contains(el)) return { kind: 'root' };
+    return null;
+  };
+
+  const showGhost = (x: number, y: number, name: string) => {
+    const el = ghostRef.current;
+    if (!el) return;
+    el.textContent = name;
+    el.style.transform = `translate3d(${x + 14}px, ${y + 12}px, 0)`;
+    el.style.display = 'block';
+  };
+
+  const hideGhost = () => {
+    if (ghostRef.current) ghostRef.current.style.display = 'none';
+  };
+
+  /** 结束一次拖拽；apply = false 表示取消（Esc / pointercancel）。 */
+  const finishDrag = (apply: boolean) => {
+    const source = pendingDragRef.current;
+    const wasDragging = draggingRef.current;
+    const target = dropTargetRef.current;
+    pendingDragRef.current = null;
+    draggingRef.current = false;
+    dropTargetRef.current = null;
+    if (hoverExpandRef.current) {
+      window.clearTimeout(hoverExpandRef.current.timer);
+      hoverExpandRef.current = null;
+    }
     setDrag(null);
     setDropTarget(null);
-    if (!source || !target || target.kind !== row.kind || target.id !== row.id) return;
-    if (!canDrop(source, row, target.zone)) return;
-    if (target.zone === 'into') expandFolder(row.id);
-    const parentId = target.zone === 'into' ? row.id : rowParentId(row);
+    hideGhost();
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    if (!wasDragging) return;
+    // 拖拽结束后紧跟一次 click，吞掉它，避免误切文档 / 误清选中。
+    suppressClickRef.current = true;
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 0);
+    if (!apply || !source || !target) return;
+    if (target.kind === 'root') {
+      const position = rootEndPosition();
+      if (source.kind === 'folder') void moveFolder(source.id, null, position);
+      else void moveDocument(source.id, null, position);
+      return;
+    }
+    const row = tree.find(r => r.kind === target.kind && r.id === target.id);
+    if (!row) return;
+    if (target.zone === 'into') {
+      expandFolder(row.id);
+      if (source.kind === 'folder') void moveFolder(source.id, row.id, null);
+      else void moveDocument(source.id, row.id, null);
+      return;
+    }
+    const parentId = rowParentId(row);
     const position = dropPositionFor(row, target.zone, source);
     if (source.kind === 'folder') void moveFolder(source.id, parentId, position);
     else void moveDocument(source.id, parentId, position);
   };
+
+  const handlePointerDown = (e: React.PointerEvent, row: TreeRow) => {
+    if (e.button !== 0) return;
+    if (editing?.kind === row.kind && editing.id === row.id) return;
+    const el = e.target as HTMLElement;
+    // 展开箭头 / 删除按钮 / 重命名输入框不参与拖拽。
+    if (el.closest('input, button, [data-no-drag]')) return;
+    pendingDragRef.current = {
+      kind: row.kind,
+      id: row.id,
+      name: row.name,
+      x: e.clientX,
+      y: e.clientY,
+    };
+  };
+
+  const handlePointerMove = (e: PointerEvent) => {
+    const source = pendingDragRef.current;
+    if (!source) return;
+    if (!draggingRef.current) {
+      if (Math.abs(e.clientX - source.x) < 4 && Math.abs(e.clientY - source.y) < 4) return;
+      draggingRef.current = true;
+      setDrag({ kind: source.kind, id: source.id });
+      setMenu(null);
+      setAddMenu(false);
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'grabbing';
+    }
+    showGhost(e.clientX, e.clientY, source.name);
+    // 靠边自动滚动，长列表也能拖到看不见的位置。
+    const scroller = scrollRef.current;
+    if (scroller) {
+      const rect = scroller.getBoundingClientRect();
+      if (e.clientY < rect.top + 22) scroller.scrollTop -= 12;
+      else if (e.clientY > rect.bottom - 22) scroller.scrollTop += 12;
+    }
+    const next = hitTest(e.clientX, e.clientY, source);
+    if (!sameTarget(dropTargetRef.current, next)) {
+      dropTargetRef.current = next;
+      setDropTarget(next);
+    }
+    // 悬停在折叠目录中部 0.5s 自动展开，方便继续往子层级里拖。
+    const intoFolder = next && next.kind !== 'root' && next.zone === 'into' ? next.id : null;
+    if (intoFolder && collapsed.has(intoFolder)) {
+      if (hoverExpandRef.current?.id !== intoFolder) {
+        if (hoverExpandRef.current) window.clearTimeout(hoverExpandRef.current.timer);
+        hoverExpandRef.current = {
+          id: intoFolder,
+          timer: window.setTimeout(() => {
+            expandFolder(intoFolder);
+            hoverExpandRef.current = null;
+          }, 500),
+        };
+      }
+    } else if (hoverExpandRef.current) {
+      window.clearTimeout(hoverExpandRef.current.timer);
+      hoverExpandRef.current = null;
+    }
+  };
+
+  // 指针事件不走 HTML5 拖拽（桌面 webview 里原生拖拽会话会和 dragstart / dragover
+  // 抢事件，表现为「按下去拖完全没反应」）；这里自己算落点，行为与平台无关。
+  pointerApiRef.current = { move: handlePointerMove, finish: finishDrag };
+
+  useEffect(() => {
+    const move = (e: PointerEvent) => pointerApiRef.current.move(e);
+    const up = () => pointerApiRef.current.finish(true);
+    const cancel = () => pointerApiRef.current.finish(false);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && draggingRef.current) pointerApiRef.current.finish(false);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    // 拖到窗口外松手收不到 pointerup，失焦时兜底取消，避免拖拽状态卡住。
+    window.addEventListener('blur', cancel);
+    window.addEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('blur', cancel);
+      window.removeEventListener('keydown', key);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, []);
 
   const menuItemClass =
     'w-full flex items-center gap-2 px-3 h-8 text-[13px] text-primary hover:bg-base transition-colors';
@@ -574,7 +738,10 @@ export function Sidebar() {
   return (
     <aside
       style={{ width }}
-      className="relative shrink-0 flex flex-col bg-surface border-r border-border"
+      className={[
+        'relative shrink-0 flex flex-col bg-surface border-r border-border',
+        drag ? 'cursor-grabbing [&_*]:cursor-grabbing' : '',
+      ].join(' ')}
     >
       <div className="relative flex items-center gap-2 px-3.5 h-12 border-b border-border shrink-0">
         <AppIcon size={22} />
@@ -582,18 +749,26 @@ export function Sidebar() {
           Tree Todo
         </span>
         {version && (
-          <span
-            className="text-[11px] text-muted/80 tabular-nums select-none"
-            title={`Tree Todo v${version}`}
+          <button
+            type="button"
+            onClick={() => void checkUpdate({ manual: true })}
+            disabled={updatePhase === 'checking'}
+            title={updatePhase === 'downloading' ? '查看更新进度' : '检查更新'}
+            className="inline-flex select-none items-center gap-1 text-[11px] tabular-nums text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:cursor-default disabled:opacity-50"
           >
             v{version}
-          </span>
+            {(updatePhase === 'checking' || updatePhase === 'downloading') && (
+              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+            )}
+          </button>
         )}
       </div>
 
       <div
+        ref={scrollRef}
         className="flex-1 overflow-y-auto py-2.5 px-2"
         onClick={e => {
+          if (suppressClickRef.current) return;
           const el = e.target as HTMLElement;
           if (el.closest('[data-sidebar-row]') || el.closest('[data-sidebar-action]')) return;
           setSelection(null);
@@ -662,27 +837,20 @@ export function Sidebar() {
           const open = isFolder && !collapsed.has(row.id);
           const isDragSource = drag?.kind === row.kind && drag.id === row.id;
           const dropZone =
-            dropTarget?.kind === row.kind && dropTarget.id === row.id ? dropTarget.zone : null;
+            dropTarget && dropTarget.kind !== 'root' && dropTarget.kind === row.kind
+              ? dropTarget.id === row.id
+                ? dropTarget.zone
+                : null
+              : null;
           return (
             <div
               key={`${row.kind}-${row.id}`}
               data-sidebar-row
-              draggable={!isEditing}
-              onDragStart={e => handleDragStart(e, row)}
-              onDragEnd={() => {
-                setDrag(null);
-                setDropTarget(null);
-              }}
-              onDragOver={e => handleDragOver(e, row)}
-              onDragLeave={e => {
-                if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-                setDropTarget(prev =>
-                  prev && prev.kind === row.kind && prev.id === row.id ? null : prev,
-                );
-              }}
-              onDrop={e => handleDrop(e, row)}
+              data-kind={row.kind}
+              data-id={row.id}
+              onPointerDown={e => handlePointerDown(e, row)}
               onClick={() => {
-                if (isEditing) return;
+                if (isEditing || suppressClickRef.current) return;
                 if (isFolder) {
                   // 单击目录 = 选中（「+」的新建落点）；展开/折叠走左侧箭头
                   setSelection({ kind: 'folder', id: row.id });
@@ -699,7 +867,7 @@ export function Sidebar() {
               onContextMenu={e => openMenu(e, row)}
               style={{ paddingLeft: 8 + row.depth * 12 }}
               className={[
-                'group relative flex items-center gap-1.5 pr-2 h-7 rounded-md cursor-pointer text-[13px] transition-colors',
+                'group relative flex items-center gap-1.5 pr-2 h-7 rounded-md cursor-pointer select-none text-[13px] transition-colors',
                 selected
                   ? 'bg-accent/12 text-primary font-medium'
                   : 'text-muted hover:bg-base hover:text-primary',
@@ -711,6 +879,7 @@ export function Sidebar() {
               {isFolder ? (
                 <>
                   <span
+                    data-no-drag
                     onClick={e => {
                       e.stopPropagation();
                       toggleFolder(row.id);
@@ -801,6 +970,9 @@ export function Sidebar() {
             </div>
           );
         })}
+        {dropTarget?.kind === 'root' && (
+          <div className="mx-2 mt-1 h-0.5 rounded-full bg-accent" title="移到根目录末尾" />
+        )}
       </div>
 
       <div className="border-t border-border px-2 py-1 shrink-0 flex items-center justify-between">
@@ -840,6 +1012,13 @@ export function Sidebar() {
         onPointerUp={onResizeUp}
         className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent/60 transition-colors"
         title="拖拽调整侧边栏宽度"
+      />
+
+      {/* 拖拽时跟随光标的标签（纯装饰，不参与命中测试） */}
+      <div
+        ref={ghostRef}
+        className="pointer-events-none fixed left-0 top-0 z-[100] max-w-[220px] truncate rounded-md border border-border bg-elevated px-2.5 py-1 text-[12px] text-primary shadow-lg"
+        style={{ display: 'none' }}
       />
 
       {menu && (

@@ -1,6 +1,6 @@
 [package]
 name = "tree-todo"
-version = "1.0.0"
+version = "2.0.0"
 description = "树形待办 —— 让待办像脑图一样生长"
 authors = ["jeysin"]
 edition = "2024"
@@ -15,6 +15,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+# 自动更新（docs/08）：检查 / 下载 / 验签 / 调起系统安装器。
+tauri-plugin-updater = "2"
+# 更新安装后重启（macOS 需要显式 relaunch；Windows 由安装器接管）。
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.34", features = ["bundled"] }
