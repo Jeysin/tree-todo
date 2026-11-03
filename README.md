@@ -14,7 +14,7 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey" alt="Platform" />
     <img src="https://img.shields.io/badge/Tauri-2-24C8DB" alt="Tauri 2" />
-    <img src="https://img.shields.io/badge/status-v1.0.0-brightgreen" alt="status" />
+    <a href="https://github.com/Jeysin/tree-todo/releases/latest"><img src="https://img.shields.io/github/v/release/Jeysin/tree-todo?display_name=tag&sort=semver" alt="release" /></a>
   </p>
 </div>
 
@@ -153,10 +153,21 @@ tree-todo 把这两件事合成一个动作：
 
 ## 快速开始
 
-> 当前版本 **v1.0.0**。安装包尚未做代码签名与公证，首次打开时可能需要在系统「隐私与安全性」里手动允许；
-> 也可以直接按下面的步骤从源码构建。
+### 直接下载
 
-### 环境要求
+到 [Releases](https://github.com/Jeysin/tree-todo/releases) 下载对应平台的安装包：
+
+| 平台 | 文件 |
+| --- | --- |
+| macOS（Universal，Apple Silicon + Intel） | `tree-todo_1.0.0_universal.dmg` |
+| Windows（x64） | `tree-todo_1.0.0_x64-setup.exe` |
+
+> 安装包尚未做代码签名与公证：macOS 首次打开请右键「打开」，或到「系统设置 → 隐私与安全性」中允许；
+> Windows 若提示 SmartScreen，点「更多信息 → 仍要运行」。
+
+### 从源码构建
+
+#### 环境要求
 
 | 工具 | 版本 | 说明 |
 | --- | --- | --- |
@@ -166,7 +177,7 @@ tree-todo 把这两件事合成一个动作：
 | macOS | Xcode Command Line Tools | `xcode-select --install` |
 | Windows | MSVC 生成工具 + WebView2 Runtime | Win11 自带 WebView2，Win10 需单独安装 |
 
-### 构建与运行
+#### 构建与运行
 
 ```bash
 git clone https://github.com/Jeysin/tree-todo.git
