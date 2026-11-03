@@ -2,13 +2,17 @@
  * 树形（脑图）视图：Mind Elixir 负责全部脑图交互（展开/收起、拖拽、折叠角标、平移缩放、键盘导航），
  * 本组件只做「Rust 快照 ↔ Mind Elixir」适配 + 待办 checkbox / 状态显示。
  */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type React from 'react';
 import MindElixir from 'mind-elixir';
 import type { Theme, Topic } from 'mind-elixir';
 import 'mind-elixir/style.css';
 
+import { NodeContextMenu, type MenuState } from '../../components/NodeContextMenu';
 import { ipc } from '../../ipc';
 import type { Affected as TodoAffected, TodoNode } from '../../ipc/types';
+import { execLabel } from '../../lib/exec';
+import { useRunStore } from '../../stores/runStore';
 import { useTodoStore } from '../../stores/todoStore';
 import { setMindMapControls } from './mindmapApi';
 import {
@@ -67,6 +71,17 @@ const THEME: Theme = {
 };
 
 type TopicWithText = Topic & { text?: HTMLElement };
+
+/**
+ * 从 DOM 元素的 `data-nodeid` 解析节点 id。
+ * Mind Elixir 给 me-tpc 写的是 `me${id}`（它的 findEle 就按这个前缀查），
+ * 我们自己的元素（如 .todo-check）则没有前缀 —— 统一在这里剥掉。
+ */
+export function nodeIdFromEl(el: Element | null | undefined): string | null {
+  const raw = el?.getAttribute('data-nodeid');
+  if (!raw) return null;
+  return raw.startsWith('me') ? raw.slice(2) : raw;
+}
 
 function tdNodeObj(tpc: TopicWithText): TodoNodeObj | null {
   return (tpc.nodeObj as TodoNodeObj | null) ?? null;
@@ -134,7 +149,8 @@ function syncNodeMetadata(
     const obj = mind.getObjById(n.id, mind.nodeData) as TodoNodeObj | null;
     if (!obj) continue;
     obj.topic = n.content;
-    obj.metadata = { status: n.status, root: n.parentId === null };
+    // execution 必须带上 —— 徽标数据源就是它。漏掉会导致派发后徽标永不出现。
+    obj.metadata = { status: n.status, root: n.parentId === null, execution: n.execution ?? null };
     obj.branchColor = n.status === 'done' ? colors.muted : colors.accent;
     const tpc = findTopic(mind, n.id);
     if (tpc) decorateTopic(tpc, obj, onToggle);
@@ -438,6 +454,8 @@ export function MindMapView() {
   /** 文档切换时旧树根 id：新数据 refresh 后据此判断「可以按新布局精确恢复视口了」。 */
   const restoreAfterRootRef = useRef<string | null>(null);
   const viewportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const downRef = useRef<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
 
   const nodes = useTodoStore(s => s.nodes);
   const roots = useTodoStore(s => s.roots);
@@ -721,6 +739,28 @@ export function MindMapView() {
         mindRef.current?.scaleFit();
         return;
       }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'c') {
+        const id = st.selectedId;
+        if (!id) return;
+        e.preventDefault();
+        void useRunStore.getState().copyPrompt([id], 'plain');
+        return;
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'r') {
+        const id = st.selectedId;
+        if (!id) return;
+        e.preventDefault();
+        void useRunStore.getState().copyPrompt([id], 'receipt');
+        return;
+      }
+      if (e.altKey && e.key === 'Enter') {
+        const id = st.selectedId;
+        if (!id) return;
+        e.preventDefault();
+        const rs = useRunStore.getState();
+        rs.openDetail(rs.detailNodeId === id ? null : id);
+        return;
+      }
       if (mod && (e.key === '.' || e.key === ',')) {
         const id = st.selectedId;
         if (!id) return;
@@ -757,11 +797,70 @@ export function MindMapView() {
     return () => window.removeEventListener('keydown', onKey);
   }, [loaded, onToggle, skipSync]);
 
+  // 运行中节点每秒刷新徽标文字（全局只用一个 interval，docs/06 §9.4）。
+  useEffect(() => {
+    const t = setInterval(() => {
+      const st = useTodoStore.getState();
+      const root = containerRef.current;
+      if (!root) return;
+      root.querySelectorAll<HTMLElement>('me-tpc[data-nodeid]').forEach(tpc => {
+        const id = nodeIdFromEl(tpc);
+        const badge = tpc.querySelector<HTMLElement>('.exec-badge');
+        if (!id || !badge) return;
+        const exec = st.nodes[id]?.execution ?? null;
+        badge.textContent = execLabel(exec, Date.now());
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const onContextMenu = (e: React.MouseEvent) => {
+    const el = (e.target as HTMLElement).closest('me-tpc[data-nodeid]');
+    const id = nodeIdFromEl(el);
+    if (!id) return;
+    e.preventDefault();
+    const st = useTodoStore.getState();
+    if (st.selectedId !== id) st.select(id);
+    setMenu({ x: e.clientX, y: e.clientY, nodeId: id });
+  };
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    downRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const onMouseUp = (e: React.MouseEvent) => {
+    const down = downRef.current;
+    downRef.current = null;
+    if (!down || e.button !== 0) return;
+    const moved = Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y);
+    const target = e.target as HTMLElement;
+
+    // 右键菜单内部的点击必须原样交给菜单按钮 —— 否则这里先 setMenu(null)
+    // 把按钮卸载掉，click 事件就落空了（「查看详情 / 派发」点了没反应的根因）。
+    if (target.closest('[data-context-menu]')) return;
+
+    const badge = target.closest('.exec-badge') as HTMLElement | null;
+    if (badge) {
+      const id = nodeIdFromEl(badge.closest('me-tpc[data-nodeid]'));
+      if (id) {
+        const exec = useTodoStore.getState().nodes[id]?.execution;
+        if (exec?.runId) useRunStore.getState().openRun(exec.runId);
+        else useRunStore.getState().openDetail(id);
+      }
+      return;
+    }
+    if (moved < 4 && !target.closest('me-tpc')) {
+      useRunStore.getState().openDetail(null);
+      setMenu(null);
+    }
+  };
+
   return (
-    <div className="absolute inset-0">
+    <div className="absolute inset-0" onContextMenu={onContextMenu} onMouseDown={onMouseDown} onMouseUp={onMouseUp}>
       {/* Mind Elixir 会把传入元素设为 position:relative，因此这里用 h-full/w-full 填充外层定位容器。 */}
       <div ref={containerRef} className="mind-map-container h-full w-full" />
       <SearchBar open={searchOpen} onClose={() => useTodoStore.getState().setSearchOpen(false)} />
+      <NodeContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }

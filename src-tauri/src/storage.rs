@@ -1,4 +1,4 @@
-//! 多文档存储（docs/05 M3）：每个文档一个独立 SQLite 文件（app_data_dir/docs/{id}.db），
+﻿//! 多文档存储（docs/05 M3）：每个文档一个独立 SQLite 文件（app_data_dir/docs/{id}.db），
 //! 索引记录在 app_data_dir/documents.json；首次启动自动迁移旧的单库文件（含 WAL）。
 
 use std::fs;
@@ -10,6 +10,7 @@ use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::model::{DocIndex, DocMeta, FolderMeta, TrashDoc, TrashFolder, TrashItem};
 
+#[derive(Clone)]
 pub struct DocStore {
     data_dir: PathBuf,
 }
@@ -100,16 +101,42 @@ impl DocStore {
         if !path.exists() {
             return Ok(DocIndex::default());
         }
-        let raw = fs::read_to_string(&path)?;
-        let idx: DocIndex = serde_json::from_str(&raw)
-            .map_err(|e| AppError::ImportFormat(format!("documents.json 解析失败: {e}")))?;
-        Ok(idx)
+        let parse = |p: &Path| -> AppResult<DocIndex> {
+            let raw = fs::read_to_string(p)?;
+            serde_json::from_str(&raw)
+                .map_err(|e| AppError::ImportFormat(format!("documents.json 解析失败: {e}")))
+        };
+        match parse(&path) {
+            Ok(idx) => Ok(idx),
+            Err(err) => {
+                // .bak 兜底：索引损坏时不至于整个应用打不开。
+                let bak = path.with_extension("json.bak");
+                if bak.exists()
+                    && let Ok(idx) = parse(&bak) {
+                        let _ = fs::copy(&bak, &path);
+                        return Ok(idx);
+                    }
+                Err(err)
+            }
+        }
     }
 
-    fn save_index(&self, idx: &DocIndex) -> AppResult<()> {
+    pub fn save_index(&self, idx: &DocIndex) -> AppResult<()> {
+        let path = self.index_path();
         let raw = serde_json::to_string_pretty(idx)
             .map_err(|e| AppError::ImportFormat(format!("documents.json 序列化失败: {e}")))?;
-        fs::write(self.index_path(), raw)?;
+        // 原子写：tmp → fsync → rename，旧文件留一份 .bak（docs/06 §7.6）。
+        let tmp = path.with_extension("json.tmp");
+        {
+            use std::io::Write;
+            let mut f = fs::File::create(&tmp)?;
+            f.write_all(raw.as_bytes())?;
+            f.sync_all()?;
+        }
+        if path.exists() {
+            let _ = fs::copy(&path, path.with_extension("json.bak"));
+        }
+        fs::rename(&tmp, &path)?;
         Ok(())
     }
 
@@ -121,6 +148,12 @@ impl DocStore {
         fs::create_dir_all(self.trash_dir())?;
         let existing = self.load_index()?;
         if !existing.documents.is_empty() {
+            if existing.schema_version < 2 {
+                let mut upgraded = existing;
+                upgraded.schema_version = 2;
+                self.save_index(&upgraded)?;
+                return Ok(upgraded);
+            }
             return Ok(existing);
         }
 
@@ -142,11 +175,13 @@ impl DocStore {
         }
 
         let idx = DocIndex {
+            schema_version: 2,
             documents: vec![DocMeta {
                 id: id.clone(),
                 name: "我的任务".to_string(),
                 folder_id: None,
                 created_at: Utc::now().to_rfc3339(),
+                workspace: None,
             }],
             folders: Vec::new(),
             last_opened: Some(id),
@@ -172,6 +207,7 @@ impl DocStore {
             name: name.trim().to_string(),
             folder_id,
             created_at: Utc::now().to_rfc3339(),
+            workspace: None,
         };
         idx.documents.push(meta.clone());
         self.save_index(&idx)?;
@@ -461,6 +497,7 @@ impl DocStore {
             // 目录可能已被删除：恢复的文档放回根层级，避免指向不存在的目录。
             folder_id: None,
             created_at: doc.created_at,
+            workspace: None,
         });
         if idx.last_opened.is_none() {
             idx.last_opened = Some(id.to_string());
@@ -520,6 +557,17 @@ mod tests {
         (DocStore::new(dir.clone()), dir)
     }
 
+    /// 清理临时目录。Windows 上 `RemoveDirectory` 可能因目录变更通知延迟报
+    /// ERROR_DIR_NOT_EMPTY（目录实际已空），重试即可；清理失败不判测试失败。
+    fn cleanup(dir: &Path) {
+        for _ in 0..10 {
+            if fs::remove_dir_all(dir).is_ok() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     #[test]
     fn doc_trash_restore_and_purge() {
         let (store, dir) = temp_store();
@@ -547,7 +595,7 @@ mod tests {
         assert!(idx.trash.is_empty());
         assert!(!store.trash_base(&first.id).with_extension("db").exists());
 
-        std::fs::remove_dir_all(dir).unwrap();
+        cleanup(&dir);
     }
 
     #[test]
@@ -556,7 +604,7 @@ mod tests {
         let idx = store.ensure().unwrap();
         let id = idx.documents[0].id.clone();
         assert!(matches!(store.trash(&id), Err(AppError::LastDocument)));
-        std::fs::remove_dir_all(dir).unwrap();
+        cleanup(&dir);
     }
 
     #[test]
@@ -610,7 +658,7 @@ mod tests {
         assert!(idx.trash_folders.is_empty());
         assert!(!store.trash_base(&doc.id).with_extension("db").exists());
 
-        std::fs::remove_dir_all(dir).unwrap();
+        cleanup(&dir);
     }
 
     #[test]
@@ -630,7 +678,7 @@ mod tests {
             store.delete_folder(&folder.id),
             Err(AppError::LastDocument)
         ));
-        std::fs::remove_dir_all(dir).unwrap();
+        cleanup(&dir);
     }
 
     #[test]
@@ -664,6 +712,6 @@ mod tests {
             .unwrap();
         assert_eq!(reattached.parent_id.as_deref(), Some(work.id.as_str()));
 
-        std::fs::remove_dir_all(dir).unwrap();
+        cleanup(&dir);
     }
 }

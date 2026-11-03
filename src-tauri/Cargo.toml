@@ -21,6 +21,11 @@ rusqlite = { version = "0.34", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
+# MCP server 的 HTTP 传输（docs/06 v2 §4：固定端口 + POST /mcp）。
+tiny_http = "0.12"
+# 剪贴板：WebView2 的 navigator.clipboard 在部分环境不可用（非 secure context / 权限），
+# 统一走原生剪贴板，前端仅作兜底。
+arboard = "3"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

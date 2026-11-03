@@ -4,11 +4,13 @@
  */
 import type { MindElixirData, NodeObj } from 'mind-elixir';
 
-import type { NodeStatus, TodoNode } from '../../ipc/types';
+import type { NodeExecution, NodeStatus, TodoNode } from '../../ipc/types';
+import { execLabel } from '../../lib/exec';
 
 export interface TodoMeta {
   status: NodeStatus;
   root: boolean;
+  execution?: NodeExecution | null;
 }
 
 export type TodoNodeObj = NodeObj<TodoMeta>;
@@ -49,7 +51,7 @@ function toNodeObj(
     id,
     topic: node.content,
     expanded: !node.collapsed,
-    metadata: { status: node.status, root: id === rootId },
+    metadata: { status: node.status, root: id === rootId, execution: node.execution ?? null },
     branchColor: node.status === 'done' ? colors.muted : colors.accent,
     children: (childrenOf[id] ?? [])
       // 「隐藏已完成」：整棵 done 子树都不参与渲染（父 done ⇒ 子孙必 done）
@@ -202,6 +204,11 @@ export function decorateTopic(
 ): void {
   const done = statusOf(nodeObj) === 'done';
   const isRoot = metaOf(nodeObj)?.root ?? !nodeObj.parent;
+  const exec = metaOf(nodeObj)?.execution ?? null;
+
+  // 注意：不要覆盖 tpc.dataset.nodeid！Mind Elixir 自己把它设为 `me${id}`，
+  // 其 findEle 就按这个前缀查询；一旦覆盖成裸 id，findEle 永远失败，
+  // syncNodeMetadata / 右键定位 / 徽标更新会全部静默失效。
 
   let check = tpc.querySelector<HTMLButtonElement>('.todo-check');
   if (!check) {
@@ -210,7 +217,6 @@ export function decorateTopic(
     check.className = 'todo-check';
     tpc.insertBefore(check, tpc.firstChild);
   }
-  check.dataset.nodeid = nodeObj.id;
   check.classList.toggle('checked', done);
   check.setAttribute('aria-checked', String(done));
   check.title = done ? '标记为待处理' : '标记为已完成';
@@ -233,4 +239,27 @@ export function decorateTopic(
   tpc.classList.toggle('todo-done', done);
   tpc.classList.toggle('todo-root-topic', isRoot);
   tpc.classList.toggle('todo-empty', !nodeObj.topic);
+
+  // 执行状态徽标（docs/06 §9.4）：右下角轻量文字 + 左侧竖条，不参与文本折行。
+  let badge = tpc.querySelector<HTMLElement>('.exec-badge');
+  if (!exec) {
+    badge?.remove();
+    tpc.classList.remove('has-exec');
+    tpc.removeAttribute('data-exec');
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'exec-badge';
+    tpc.appendChild(badge);
+  }
+  tpc.classList.add('has-exec');
+  tpc.dataset.exec = exec.state;
+  badge.dataset.state = exec.state;
+  badge.textContent = execLabel(exec, Date.now());
+  badge.title = `${exec.agentName}${exec.model ? ` · ${exec.model}` : ''}${exec.workspace ? ` · ${exec.workspace}` : ''}`;
+  badge.setAttribute(
+    'aria-label',
+    exec.state === 'running' ? '执行中' : exec.state === 'awaiting_review' ? '待验收' : '执行失败',
+  );
 }

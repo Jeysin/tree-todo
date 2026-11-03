@@ -44,6 +44,7 @@ pub fn create_node_at(
         updated_at: ts.clone(),
         deleted_at: None,
         completed_at: None,
+        execution: None,
     };
     queries::insert_node(tx, &node)?;
     let mut changed_ancestors = propagate_upward(tx, parent_id)?;

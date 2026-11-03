@@ -16,6 +16,89 @@ export interface TodoNode {
   deletedAt: string | null;
   /** v0.3 完成时间（统计用；pending 时为 null）。 */
   completedAt: string | null;
+  /** v1.1 执行状态（docs/06 §3.2）；没有执行时为 null / 缺省。 */
+  execution?: NodeExecution | null;
+}
+
+export type ExecState = 'queued' | 'running' | 'awaiting_review' | 'failed';
+
+/** 节点执行态（docs/06 v2 §3.2，读自 nodes.exec_* 列）。 */
+export interface NodeExecution {
+  state: ExecState;
+  runId?: string;
+  source?: 'run' | 'import';
+  agentId?: string;
+  agentName: string;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  needsConfirmation?: boolean;
+  model?: string;
+  workspace?: string;
+  reported?: 'done' | 'skipped' | 'failed';
+  summary?: string;
+}
+
+export type RunStatus =
+  | 'dispatched'
+  | 'queued'
+  | 'running'
+  | 'awaiting_review'
+  | 'reviewed'
+  | 'failed'
+  | 'blocked'
+  | 'cancelled'
+  | 'interrupted';
+
+export interface Run {
+  id: string;
+  agentId: string;
+  status: RunStatus;
+  mode: string;
+  needsConfirmation: boolean;
+  workspace: string | null;
+  model: string | null;
+  prompt: string;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  error: string | null;
+  summary: string | null;
+  reviewedAt: string | null;
+  dismissedAt: string | null;
+}
+
+export interface RunNode {
+  runId: string;
+  nodeId: string;
+  report: 'pending' | 'done' | 'skipped' | 'failed';
+  /** 'dismissed'：节点被「忽略」时收口（Rust dismiss_node 写入）。 */
+  review: 'pending' | 'accepted' | 'rejected' | 'dismissed';
+  summary: string | null;
+  content: string;
+}
+
+export type RunView = Run & { nodes: RunNode[] };
+
+/** 「复制 Prompt」的结果：带回执变体携带 runId（docs/06 v2 §5.1）。 */
+export interface CopyResult {
+  prompt: string;
+  runId: string | null;
+  reused: boolean;
+}
+
+/** MCP 服务配置（设置页展示与一键复制，docs/06 v2 §4.4）。 */
+export interface McpConfig {
+  enabled: boolean;
+  port: number | null;
+  url: string | null;
+  token: string;
+}
+
+export interface ExecCounts {
+  running: number;
+  awaiting: number;
+  failed: number;
 }
 
 /** 变更类 command 的统一返回（docs/01 D6：受影响快照）。 */
@@ -39,7 +122,11 @@ export interface AppError {
     | 'CyclicMove'
     | 'ImportFormat'
     | 'LastDocument'
-    | 'RootProtected';
+    | 'RootProtected'
+    | 'SchemaTooNew'
+    | 'Migration'
+    | 'RunNotFound'
+    | 'BadRequest';
   message: string;
 }
 

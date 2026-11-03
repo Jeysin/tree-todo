@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Check } from 'lucide-react';
 
 import type { TodoNode } from '../../ipc/types';
+import { execLabel } from '../../lib/exec';
 import { formatDoneTime } from '../../lib/time';
 import { useTodoStore } from '../../stores/todoStore';
 
@@ -15,10 +16,17 @@ function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string)
   const toggle = useTodoStore(s => s.toggle);
   const { leaf, path } = data;
   const done = leaf.status === 'done';
+  const exec = leaf.execution ?? null;
+  const awaiting = exec?.state === 'awaiting_review';
+  const failed = exec?.state === 'failed';
   return (
     <div
       onClick={() => onReveal(leaf.id)}
-      className="group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer hover:bg-surface border border-transparent hover:border-border transition-colors"
+      className={[
+        'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer hover:bg-surface border border-transparent hover:border-border transition-colors',
+        awaiting ? 'border-l-2 border-l-warning bg-warning/5' : '',
+        failed ? 'border-l-2 border-l-red-500 bg-red-500/5' : '',
+      ].join(' ')}
     >
       <button
         onClick={e => {
@@ -41,6 +49,23 @@ function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string)
           <div className="text-xs text-muted/70 truncate">{path.join(' / ')}</div>
         )}
       </div>
+      {!done && exec && (
+        <span
+          className={[
+            'shrink-0 text-[11px] tabular-nums px-1.5 h-5 rounded-full inline-flex items-center',
+            exec.state === 'running'
+              ? 'text-accent bg-accent/10'
+              : exec.state === 'awaiting_review'
+                ? 'text-warning bg-warning/10'
+                : exec.state === 'failed'
+                  ? 'text-red-500 bg-red-500/10'
+                  : 'text-muted bg-base',
+          ].join(' ')}
+          title={`${exec.agentName}${exec.model ? ` · ${exec.model}` : ''}`}
+        >
+          {execLabel(exec, Date.now())}
+        </span>
+      )}
       {done && (
         <span className="shrink-0 text-xs text-muted/60 tabular-nums">
           {formatDoneTime(leaf.updatedAt)}
@@ -56,11 +81,12 @@ interface FlatColumnProps {
   tone: 'pending' | 'done';
   rows: LeafRowData[];
   empty: string;
+  awaiting?: number;
   onReveal: (id: string) => void;
 }
 
 /** 单列：表头吸顶，列表独立滚动，两列互不影响。 */
-function FlatColumn({ title, count, tone, rows, empty, onReveal }: FlatColumnProps) {
+function FlatColumn({ title, count, tone, rows, empty, awaiting = 0, onReveal }: FlatColumnProps) {
   const dot = tone === 'pending' ? 'bg-accent' : 'bg-success';
   const badge =
     tone === 'pending' ? 'bg-accent/15 text-accent' : 'bg-success/15 text-success';
@@ -72,6 +98,11 @@ function FlatColumn({ title, count, tone, rows, empty, onReveal }: FlatColumnPro
         <span className={['px-1.5 py-0.5 rounded-full text-[11px] leading-3 tabular-nums', badge].join(' ')}>
           {count}
         </span>
+        {awaiting > 0 && (
+          <span className="px-1.5 py-0.5 rounded-full text-[11px] leading-3 text-warning bg-warning/10">
+            待验收 {awaiting}
+          </span>
+        )}
       </header>
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
         {rows.length === 0 ? (
@@ -125,9 +156,18 @@ export function FlatView() {
       for (const k of kids) walk(k);
     };
     for (const r of roots) walk(r);
+    const rank = (n: TodoNode) => {
+      const s = n.execution?.state;
+      if (s === 'running' || s === 'queued') return 0;
+      if (s === 'awaiting_review') return 1;
+      return 2;
+    };
+    pendingList.sort((a, b) => rank(a.leaf) - rank(b.leaf));
     doneList.sort((a, b) => b.leaf.updatedAt.localeCompare(a.leaf.updatedAt));
     return { pending: pendingList, done: doneList };
   }, [nodes, roots, childrenOf]);
+
+  const awaiting = pending.filter(d => d.leaf.execution?.state === 'awaiting_review').length;
 
   const onReveal = (id: string) => void revealNode(id);
 
@@ -138,6 +178,7 @@ export function FlatView() {
         count={pending.length}
         tone="pending"
         rows={pending}
+        awaiting={awaiting}
         empty={done.length > 0 ? '没有待处理的叶子节点，去树里看看吧' : '树还是空的，去创建第一个任务'}
         onReveal={onReveal}
       />

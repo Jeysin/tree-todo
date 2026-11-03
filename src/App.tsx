@@ -5,8 +5,12 @@ import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { ToastContainer } from './components/Toast';
 import { TopBar } from './components/TopBar';
+import { NodeDetailPanel } from './components/NodeDetailPanel';
+import { RunDrawer } from './components/RunDrawer';
+import { initRunEvents, useRunStore } from './stores/runStore';
 import { useTodoStore } from './stores/todoStore';
 import { FlatView } from './views/flat/FlatView';
+import { SettingsView } from './views/settings/SettingsView';
 import { StatsView } from './views/stats/StatsView';
 import { TrashView } from './views/trash/TrashView';
 import { MindMapView } from './views/tree/MindMapView';
@@ -27,6 +31,13 @@ function App() {
     void loadTree();
     void loadTrash();
   }, [loadDocuments, loadTree, loadTrash]);
+
+  // 运行事件监听（只注册一次；run:status 由 MCP 回执 / 验收 / 收口推送）
+  useEffect(() => {
+    void useRunStore.getState().loadRuns();
+    const off = initRunEvents();
+    return off;
+  }, []);
 
   // 系统菜单栏 File → 导出全部 / 导入（Rust 侧发事件，这里复用前端 dialog + 命令）
   useEffect(() => {
@@ -57,6 +68,9 @@ function App() {
       } else if (key === '3') {
         e.preventDefault();
         setViewMode('stats');
+      } else if (key === ',') {
+        e.preventDefault();
+        setViewMode('settings');
       } else if (key === 'z' && !isEditable) {
         e.preventDefault();
         if (e.shiftKey) void redo();
@@ -87,6 +101,9 @@ function App() {
             {viewMode === 'flat' && <FlatView />}
             {viewMode === 'stats' && <StatsView />}
             {viewMode === 'trash' && <TrashView />}
+            {viewMode === 'settings' && <SettingsView />}
+            {viewMode !== 'settings' && <NodeDetailPanel />}
+            {viewMode !== 'settings' && <RunDrawer />}
           </main>
           <StatusBar />
         </div>

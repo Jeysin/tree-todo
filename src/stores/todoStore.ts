@@ -11,7 +11,7 @@ import { confirm, open, save } from '@tauri-apps/plugin-dialog';
 import { ipc } from '../ipc';
 import type { Affected, AppError, DocMeta, FolderMeta, TodoNode, TrashItem } from '../ipc/types';
 
-export type ViewMode = 'tree' | 'flat' | 'stats' | 'trash';
+export type ViewMode = 'tree' | 'flat' | 'stats' | 'trash' | 'settings';
 export type Theme = 'system' | 'light' | 'dark';
 
 /** 平铺视图跳转定位请求（MindMapView 消费后清除）。 */

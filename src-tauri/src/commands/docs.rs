@@ -118,6 +118,7 @@ pub fn delete_document(state: State<'_, AppState>, id: String) -> AppResult<DocI
 pub fn switch_document(state: State<'_, AppState>, id: String) -> AppResult<()> {
     let path = state.docs.db_path(&id);
     let new_db = Db::open(&path)?;
+    crate::db::exec::reconcile(&new_db.conn)?;
     let mut cur = state.current.lock().expect("current doc mutex poisoned");
     if cur.id == id {
         return Ok(());

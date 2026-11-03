@@ -6,12 +6,33 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{AppError, AppResult};
-use crate::model::{Node, NodeStatus};
+use crate::model::{ExecDetail, ExecState, Node, NodeExecution, NodeStatus};
 
 const COLS: &str =
-    "id, parent_id, content, note, status, position, collapsed, created_at, updated_at, deleted_at, completed_at";
+    "id, parent_id, content, note, status, position, collapsed, created_at, updated_at, deleted_at, completed_at, \
+     exec_state, exec_run_id, exec_agent_id, exec_agent_name, exec_started_at, exec_finished_at, exec_duration_ms, exec_needs_confirm, exec_detail";
 
 fn row_to_node(row: &rusqlite::Row) -> rusqlite::Result<Node> {
+    let exec_state = ExecState::parse(&row.get::<_, String>(11)?);
+    let execution = if exec_state == ExecState::None {
+        None
+    } else {
+        let detail_raw: Option<String> = row.get(19)?;
+        let detail: ExecDetail = detail_raw
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Some(NodeExecution {
+            state: exec_state,
+            run_id: row.get(12)?,
+            agent_id: row.get::<_, Option<String>>(13)?.unwrap_or_default(),
+            agent_name: row.get::<_, Option<String>>(14)?.unwrap_or_default(),
+            started_at: row.get::<_, Option<String>>(15)?.unwrap_or_default(),
+            finished_at: row.get(16)?,
+            duration_ms: row.get(17)?,
+            needs_confirmation: row.get::<_, i64>(18)? != 0,
+            detail,
+        })
+    };
     Ok(Node {
         id: row.get(0)?,
         parent_id: row.get(1)?,
@@ -24,6 +45,7 @@ fn row_to_node(row: &rusqlite::Row) -> rusqlite::Result<Node> {
         updated_at: row.get(8)?,
         deleted_at: row.get(9)?,
         completed_at: row.get(10)?,
+        execution,
     })
 }
 

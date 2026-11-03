@@ -36,14 +36,19 @@ export function StatusBar() {
   const stats = useMemo(() => {
     let pending = 0;
     let done = 0;
+    let running = 0;
+    let awaiting = 0;
     for (const n of Object.values(nodes)) {
+      const exec = n.execution?.state;
+      if (exec === 'running' || exec === 'queued') running += 1;
+      if (exec === 'awaiting_review') awaiting += 1;
       if ((childrenOf[n.id] ?? []).length === 0) {
         if (n.status === 'pending') pending += 1;
         else done += 1;
       }
     }
     const total = pending + done;
-    return { pending, done, rate: total === 0 ? 0 : Math.round((done / total) * 100) };
+    return { pending, done, running, awaiting, rate: total === 0 ? 0 : Math.round((done / total) * 100) };
   }, [nodes, childrenOf]);
 
   return (
@@ -54,6 +59,18 @@ export function StatusBar() {
         <b className="font-semibold text-primary tabular-nums">{stats.done}</b> 已完成
         <span className="text-border">·</span>
         叶子完成率 <b className="font-semibold text-primary tabular-nums">{stats.rate}%</b>
+        {stats.running > 0 && (
+          <>
+            <span className="text-border">·</span>
+            <span className="text-accent">AI 执行中 {stats.running}</span>
+          </>
+        )}
+        {stats.awaiting > 0 && (
+          <>
+            <span className="text-border">·</span>
+            <span className="text-warning">待验收 {stats.awaiting}</span>
+          </>
+        )}
       </span>
       {viewMode === 'tree' && <ZoomControls />}
     </footer>

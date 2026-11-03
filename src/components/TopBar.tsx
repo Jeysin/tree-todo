@@ -1,26 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Check,
   ChevronsDownUp,
   ChevronsUpDown,
   Download,
   Eye,
   EyeOff,
   Keyboard,
-  Monitor,
-  Moon,
   MoreHorizontal,
   Search,
-  Sun,
 } from 'lucide-react';
 
-import { useTodoStore, type Theme } from '../stores/todoStore';
-
-const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Sun }[] = [
-  { value: 'system', label: '跟随系统', icon: Monitor },
-  { value: 'light', label: '浅色', icon: Sun },
-  { value: 'dark', label: '深色', icon: Moon },
-];
+import { useTodoStore } from '../stores/todoStore';
+import { useRunStore } from '../stores/runStore';
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -68,10 +59,16 @@ export function TopBar() {
   const exportDocument = useTodoStore(s => s.exportDocument);
   const collapseAll = useTodoStore(s => s.collapseAll);
   const setSearchOpen = useTodoStore(s => s.setSearchOpen);
-  const theme = useTodoStore(s => s.theme);
-  const setTheme = useTodoStore(s => s.setTheme);
   const hideDone = useTodoStore(s => s.hideDone);
   const setHideDone = useTodoStore(s => s.setHideDone);
+  const runs = useRunStore(s => s.runs);
+
+  // 运行 / 待验收计数（从 runs 派生，不额外轮询）。
+  const runningCount = runs.filter(r => r.status === 'running' || r.status === 'queued').length;
+  const awaitingCount = runs.filter(r => r.status === 'awaiting_review').length;
+  const latestRunId =
+    runs.find(r => r.status === 'awaiting_review' || r.status === 'running' || r.status === 'queued')
+      ?.id ?? null;
 
   const [moreOpen, setMoreOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -131,6 +128,28 @@ export function TopBar() {
 
       <div className="flex-1" />
 
+      {/* 待验收 / 运行中 徽标（docs/06 §9.5）：全局可见，点击打开运行抽屉 */}
+      {(runningCount > 0 || awaitingCount > 0) && (
+        <button
+          onClick={() => useRunStore.getState().openRun(latestRunId)}
+          title={awaitingCount > 0 ? `${awaitingCount} 个任务待验收` : `${runningCount} 个任务执行中`}
+          className="h-7 px-2.5 rounded-md border border-border text-xs text-muted hover:text-primary hover:bg-base inline-flex items-center gap-1.5"
+        >
+          {runningCount > 0 && (
+            <span className="inline-flex items-center gap-1 text-accent">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+              {runningCount}
+            </span>
+          )}
+          {awaitingCount > 0 && (
+            <span className="inline-flex items-center gap-1 text-warning">
+              <span className="w-1.5 h-1.5 rounded-full bg-warning" />
+              待验收 {awaitingCount}
+            </span>
+          )}
+        </button>
+      )}
+
       {viewMode === 'tree' && (
         <>
           <button className={iconBtn} onClick={() => setSearchOpen(true)} title="搜索 (Ctrl+F)">
@@ -169,18 +188,6 @@ export function TopBar() {
         </button>
         {moreOpen && (
           <div className="absolute right-0 top-9 z-40 w-52 rounded-lg border border-border bg-elevated shadow-xl py-1">
-            <div className="px-3 pt-1 pb-1.5 text-[11px] text-muted select-none">主题</div>
-            {THEME_OPTIONS.map(opt => {
-              const Icon = opt.icon;
-              return (
-                <button key={opt.value} onClick={() => setTheme(opt.value)} className={menuItem}>
-                  <Icon className="w-3.5 h-3.5 text-muted" />
-                  {opt.label}
-                  {theme === opt.value && <Check className="w-3.5 h-3.5 ml-auto text-accent" />}
-                </button>
-              );
-            })}
-            <div className="my-1 border-t border-border" />
             <button
               onClick={() => {
                 setMoreOpen(false);

@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::db::{queries, Db};
+use crate::db::{exec, queries, Db};
 use crate::error::{AppError, AppResult};
 use crate::history;
 use crate::model::{
@@ -202,7 +202,7 @@ pub fn import_bundle(
     if bundle.format != BUNDLE_FORMAT {
         return Err(AppError::ImportFormat("不是 tree-todo 导出文件".into()));
     }
-    if bundle.version != BUNDLE_VERSION {
+    if bundle.version != 2 && bundle.version != BUNDLE_VERSION {
         return Err(AppError::ImportFormat(format!(
             "不支持的版本: {}",
             bundle.version
@@ -291,11 +291,16 @@ fn fill_document(store: &DocStore, doc_id: &str, nodes: &[ImportNode]) -> AppRes
     let mut db = Db::open(&path)?;
     let tx = db.conn.transaction()?;
     tx.execute("DELETE FROM nodes", [])?;
+    tx.execute("DELETE FROM run_nodes", [])?;
+    tx.execute("DELETE FROM runs", [])?;
     let mut list: Vec<Node> = nodes.iter().cloned().map(ImportNode::into_node).collect();
     normalize_nodes(&mut list);
     history::sort_parents_first(&mut list);
     for node in &list {
         queries::upsert_node(&tx, node)?;
+        if let Some(execution) = &node.execution {
+            exec::apply_imported(&tx, &node.id, execution)?;
+        }
     }
     if let Some(root) = queries::root_id(&tx)? {
         propagate::recompute_subtree(&tx, &root)?;
@@ -367,6 +372,7 @@ fn normalize_nodes(list: &mut Vec<Node>) {
             updated_at: ts,
             deleted_at: None,
             completed_at: None,
+            execution: None,
         });
     }
 }
@@ -388,6 +394,7 @@ mod tests {
             updated_at: String::new(),
             deleted_at: None,
             completed_at: None,
+            execution: None,
         }
     }
 
@@ -454,6 +461,7 @@ mod tests {
             created_at: "2026-01-01T00:00:00+00:00".to_string(),
             updated_at: "2026-01-01T00:00:00+00:00".to_string(),
             completed_at: None,
+            execution: None,
         }
     }
 
@@ -495,6 +503,13 @@ mod tests {
             1
         );
 
-        std::fs::remove_dir_all(dir).unwrap();
+        // Windows 上 RemoveDirectory 可能因变更通知延迟报「目录不是空的」（目录实际已空），
+        // 重试即可；清理失败不影响测试结论。
+        for _ in 0..10 {
+            if std::fs::remove_dir_all(&dir).is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 }

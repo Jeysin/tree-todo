@@ -6,7 +6,7 @@
 
 use tauri::State;
 
-use crate::db::queries;
+use crate::db::{exec, queries, runs};
 use crate::error::AppResult;
 use crate::history;
 use crate::model::{Affected, CreateResult, Node, NodeStatus};
@@ -110,10 +110,20 @@ pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affect
     before.extend(queries::ancestors(&tx, node.parent_id.as_deref())?);
     let mut history = state.history.lock().expect("history mutex poisoned");
     let affected = history::run_with_history(&tx, before, &mut history, |tx| {
+        // 手动勾选待验收节点 = 隐式验收；顺手清掉执行态，避免徽标残留。
+        let exec_run = node.execution.as_ref().and_then(|e| e.run_id.clone());
+        if let Some(rid) = &exec_run {
+            runs::set_review(tx, rid, std::slice::from_ref(&id), "accepted")?;
+        }
+        exec::clear_node(tx, &id)?;
         let upserted = match node.status {
             NodeStatus::Pending => propagate::complete(tx, &id)?,
             NodeStatus::Done => propagate::uncomplete(tx, &id)?,
         };
+        if let Some(rid) = &exec_run {
+            runs::maybe_mark_reviewed(tx, rid)?;
+            exec::sync_run(tx, rid)?;
+        }
         Ok(Affected {
             upserted,
             removed: Vec::new(),
@@ -136,6 +146,22 @@ pub fn delete_node(state: State<'_, AppState>, id: String) -> AppResult<Affected
     before.extend(queries::ancestors(&tx, node.parent_id.as_deref())?);
     let mut history = state.history.lock().expect("history mutex poisoned");
     let affected = history::run_with_history(&tx, before, &mut history, |tx| {
+        // 节点物理删除前，把它名下的待验收记录收口，避免 run 永远卡在 awaiting_review。
+        let ids = queries::subtree_ids(tx, &id)?;
+        let ts = now();
+        for nid in &ids {
+            tx.execute(
+                "UPDATE run_nodes SET review = 'rejected', reviewed_at = ?2
+                 WHERE node_id = ?1 AND review = 'pending'",
+                rusqlite::params![nid, ts],
+            )?;
+        }
+        tx.execute(
+            "UPDATE runs SET status = 'reviewed', reviewed_at = ?1
+             WHERE status = 'awaiting_review'
+               AND NOT EXISTS (SELECT 1 FROM run_nodes WHERE run_id = runs.id AND review = 'pending')",
+            rusqlite::params![ts],
+        )?;
         let (removed, upserted) = propagate::delete_node(tx, &id)?;
         Ok(Affected { upserted, removed })
     })?;

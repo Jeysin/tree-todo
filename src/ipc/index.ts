@@ -6,11 +6,15 @@ import { invoke } from '@tauri-apps/api/core';
 
 import type {
   Affected,
+  CopyResult,
   CreateResult,
   DocIndex,
   DocMeta,
+  ExecCounts,
   FolderMeta,
   ImportResult,
+  McpConfig,
+  RunView,
   TodoNode,
   TrashItem,
 } from './types';
@@ -97,4 +101,32 @@ export const ipc = {
   deleteFolder: (id: string): Promise<DocIndex> => invoke('delete_folder', { id }),
   switchDocument: (id: string): Promise<void> => invoke('switch_document', { id }),
   getCurrentDocument: (): Promise<DocMeta> => invoke('get_current_document'),
+
+  // ── AI Agent 协同（docs/06 v2：手动粘贴 + MCP 回执）──
+  /** 复制 Prompt。variant = 'plain'（纯文本）| 'receipt'（带回执，建 dispatched run）。 */
+  copyPrompt: (nodeIds: string[], variant: 'plain' | 'receipt'): Promise<CopyResult> =>
+    invoke('copy_prompt', { nodeIds, variant }),
+  /** 预览 Prompt（无副作用）。 */
+  previewPrompt: (nodeIds: string[], variant: 'plain' | 'receipt'): Promise<string> =>
+    invoke('preview_prompt', { nodeIds, variant }),
+  listRuns: (): Promise<RunView[]> => invoke('list_runs'),
+  getRun: (runId: string): Promise<RunView> => invoke('get_run', { runId }),
+  /** running 卡死时的手动收口（「标记结束」）。 */
+  closeRun: (runId: string, reason?: string): Promise<void> =>
+    invoke('close_run', { runId, reason: reason ?? null }),
+  acceptRun: (runId: string, nodeIds: string[]): Promise<Affected> =>
+    invoke('accept_run', { runId, nodeIds }),
+  rejectRun: (runId: string, nodeIds: string[], feedback: string): Promise<void> =>
+    invoke('reject_run', { runId, nodeIds, feedback }),
+  acceptNode: (nodeId: string): Promise<Affected> => invoke('accept_node', { nodeId }),
+  dismissNode: (nodeId: string): Promise<Affected> => invoke('dismiss_node', { nodeId }),
+  execCounts: (): Promise<ExecCounts> => invoke('exec_counts'),
+  listPendingReviews: (): Promise<RunView[]> => invoke('list_pending_reviews'),
+  purgeRuns: (beforeDays: number): Promise<number> => invoke('purge_runs', { beforeDays }),
+  openPath: (path: string): Promise<void> => invoke('open_path', { path }),
+  copyText: (text: string): Promise<void> => invoke('copy_text', { text }),
+  /** MCP 服务配置（端口 / token / URL）。 */
+  getMcpConfig: (): Promise<McpConfig> => invoke('get_mcp_config'),
+  /** 重置 MCP token（重置后需更新 Agent 侧配置）。 */
+  resetMcpToken: (): Promise<McpConfig> => invoke('reset_mcp_token'),
 };

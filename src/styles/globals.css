@@ -109,6 +109,83 @@ body {
   max-width: 320px;
   color: var(--text-primary);
   white-space: normal;
+  position: relative;
+}
+
+/* ── 执行状态徽标（docs/06 §9.4）── */
+.mind-map-container me-tpc.has-exec {
+  padding-bottom: 16px;
+}
+
+.mind-map-container me-tpc.has-exec[data-exec="running"] {
+  animation: exec-glow 1.8s ease-in-out infinite;
+}
+
+.mind-map-container me-tpc.has-exec[data-exec="awaiting_review"] {
+  box-shadow: inset 2px 0 0 var(--warning);
+}
+
+.mind-map-container me-tpc.has-exec[data-exec="failed"] {
+  box-shadow: inset 2px 0 0 #ef4444;
+}
+
+.mind-map-container .exec-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 2px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--text-muted);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.mind-map-container .exec-badge::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 3px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--text-muted);
+}
+
+.mind-map-container .exec-badge[data-state="running"]::before {
+  background: var(--accent);
+  animation: exec-pulse 1.6s ease-in-out infinite;
+}
+
+.mind-map-container .exec-badge[data-state="awaiting_review"] {
+  color: var(--warning);
+}
+.mind-map-container .exec-badge[data-state="awaiting_review"]::before {
+  background: var(--warning);
+}
+.mind-map-container .exec-badge[data-state="failed"] {
+  color: #ef4444;
+}
+.mind-map-container .exec-badge[data-state="failed"]::before {
+  background: #ef4444;
+}
+
+@keyframes exec-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
+}
+
+@keyframes exec-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+}
+
+/* 节点右键菜单 / 右侧面板的滚动条 */
+.run-log::-webkit-scrollbar {
+  width: 6px;
 }
 
 

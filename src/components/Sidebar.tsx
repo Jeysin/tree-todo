@@ -17,6 +17,7 @@ import {
   FolderPlus,
   Pencil,
   Plus,
+  Settings,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -559,23 +560,33 @@ export function Sidebar() {
         })}
       </div>
 
-      <div className="border-t border-border p-2 shrink-0">
+      <div className="border-t border-border px-2 py-1 shrink-0 flex items-center justify-between">
         <button
           onClick={() => setViewMode('trash')}
           className={[
-            'w-full flex items-center gap-2 px-2 h-8 rounded-md text-[13px] transition-colors',
-            viewMode === 'trash'
-              ? 'bg-accent/12 text-primary font-medium'
-              : 'text-muted hover:bg-base hover:text-primary',
+            'relative w-7 h-7 rounded-md flex items-center justify-center transition-colors',
+            viewMode === 'trash' ? 'bg-accent/12 text-accent' : 'text-muted hover:bg-base hover:text-primary',
           ].join(' ')}
+          title="回收站"
+          aria-label="回收站"
         >
-          <Trash2 className="w-3.5 h-3.5" />
-          回收站
+          <Trash2 className="w-4 h-4" />
           {trash.length > 0 && (
-            <span className="ml-auto px-1.5 py-0.5 rounded-full bg-accent/15 text-accent text-[10px] leading-3">
+            <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-accent text-white text-[9px] leading-3.5 text-center">
               {trash.length}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setViewMode('settings')}
+          className={[
+            'w-7 h-7 rounded-md flex items-center justify-center transition-colors',
+            viewMode === 'settings' ? 'bg-accent/12 text-accent' : 'text-muted hover:bg-base hover:text-primary',
+          ].join(' ')}
+          title="设置（Ctrl+,）"
+          aria-label="设置"
+        >
+          <Settings className="w-4 h-4" />
         </button>
       </div>
 

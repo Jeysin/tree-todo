@@ -27,6 +27,20 @@ pub enum AppError {
     /// 单根模型：根任务不可删除、不可移动。
     #[error("根任务不可删除或移动")]
     RootProtected,
+
+    /// 文档由更高版本创建：只读打开，不迁移。
+    #[error("此文档由更高版本创建（schema v{0}），请升级应用后再打开")]
+    SchemaTooNew(u32),
+
+    /// 迁移失败（校验不通过 / 数据异常）。
+    #[error("数据迁移失败: {0}")]
+    Migration(String),
+
+    #[error("运行记录不存在: {0}")]
+    RunNotFound(String),
+
+    #[error("参数错误: {0}")]
+    BadRequest(String),
 }
 
 impl Serialize for AppError {
@@ -42,6 +56,10 @@ impl Serialize for AppError {
             AppError::ImportFormat(_) => "ImportFormat",
             AppError::LastDocument => "LastDocument",
             AppError::RootProtected => "RootProtected",
+            AppError::SchemaTooNew(_) => "SchemaTooNew",
+            AppError::Migration(_) => "Migration",
+            AppError::RunNotFound(_) => "RunNotFound",
+            AppError::BadRequest(_) => "BadRequest",
         };
         let mut s = serializer.serialize_struct("AppError", 2)?;
         s.serialize_field("code", code)?;
