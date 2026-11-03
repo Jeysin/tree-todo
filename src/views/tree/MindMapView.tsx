@@ -534,6 +534,12 @@ export function MindMapView() {
     mind.bus.addListener('selectNodes', list => {
       const id = list[0]?.id ?? null;
       useTodoStore.getState().select(id);
+      // Mind Elixir 选中节点时会把 className 重置成 "selected"，
+      // 会抹掉 todo-done / todo-root-topic 等待办视觉；这里立即重新叠加。
+      for (const obj of list) {
+        const tpc = findTopic(mind, obj.id);
+        if (tpc) decorateTopic(tpc, obj, onToggle);
+      }
     });
     mind.bus.addListener('scale', scale => {
       useTodoStore.getState().setZoomPercent(Math.round(scale * 100));

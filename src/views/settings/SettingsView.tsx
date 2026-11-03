@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FolderCog, Keyboard, Plug, RefreshCw, Sun } from 'lucide-react';
+import { FolderCog, Keyboard, Plug, RefreshCw, Sun, Trash2 } from 'lucide-react';
 
 import { ipc } from '../../ipc';
 import type { McpConfig } from '../../ipc/types';
@@ -46,6 +46,10 @@ export function SettingsView() {
   const [purging, setPurging] = useState(false);
   const [mcp, setMcp] = useState<McpConfig | null>(null);
   const [target, setTarget] = useState<(typeof MCP_TARGETS)[number]['id']>('trae');
+  /** 回收站保留天数（null = 还没加载完）。 */
+  const [retention, setRetention] = useState<number | null>(null);
+  const [retentionDraft, setRetentionDraft] = useState('30');
+  const [savingRetention, setSavingRetention] = useState(false);
 
   const loadMcp = async () => {
     try {
@@ -55,10 +59,51 @@ export function SettingsView() {
     }
   };
 
+  const loadSettings = async () => {
+    try {
+      const s = await ipc.getSettings();
+      setRetention(s.trashRetentionDays);
+      setRetentionDraft(String(s.trashRetentionDays));
+    } catch (e) {
+      showToast((e as { message?: string })?.message ?? '读取设置失败');
+    }
+  };
+
   useEffect(() => {
     if (!mcp) void loadMcp();
+    void loadSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const saveRetention = async () => {
+    if (retention === null) return;
+    const raw = retentionDraft.trim();
+    const days = Number(raw);
+    if (raw === '' || !Number.isFinite(days) || days < 0 || days > 3650) {
+      showToast('保留天数需在 0–3650 之间（0 表示不自动清理）');
+      setRetentionDraft(String(retention));
+      return;
+    }
+    const next = Math.round(days);
+    setRetentionDraft(String(next));
+    if (next === retention) return;
+    setSavingRetention(true);
+    try {
+      const s = await ipc.setTrashRetentionDays(next);
+      setRetention(s.trashRetentionDays);
+      showToast(
+        next === 0
+          ? '已关闭回收站自动清理'
+          : `回收站将自动清理删除超过 ${next} 天的内容`,
+      );
+      await useTodoStore.getState().loadTrash();
+    } catch (e) {
+      showToast((e as { message?: string })?.message ?? '保存失败');
+      setRetentionDraft(String(retention));
+    } finally {
+      setSavingRetention(false);
+    }
+  };
 
   const snippet = useMemo(() => {
     if (!mcp) return '';
@@ -194,6 +239,36 @@ export function SettingsView() {
 
             <p className="text-[11px] text-muted/70 leading-4">
               token 只在本机回写执行状态（待验收 / 计时），任务完成与否永远由你在 tree-todo 里验收。
+            </p>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Trash2 className="w-3.5 h-3.5" /> 回收站
+          </h2>
+          <div className="rounded-lg border border-border bg-surface px-3 py-3 space-y-2">
+            <div className="flex items-center gap-2 text-xs text-primary">
+              <span>自动清理删除超过</span>
+              <input
+                type="number"
+                min={0}
+                max={3650}
+                value={retentionDraft}
+                disabled={retention === null || savingRetention}
+                onChange={e => setRetentionDraft(e.target.value)}
+                onBlur={() => void saveRetention()}
+                onKeyDown={e => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                }}
+                className="w-16 h-7 px-2 rounded border border-border bg-base text-xs text-primary outline-none focus:border-accent disabled:opacity-40"
+              />
+              <span>天的内容</span>
+              {savingRetention && <span className="text-[11px] text-muted">保存中…</span>}
+            </div>
+            <p className="text-[11px] text-muted/70 leading-4">
+              回收站里的文档与目录会在启动时和运行期间自动清理；填 0 表示不自动清理。
             </p>
           </div>
         </section>

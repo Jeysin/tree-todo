@@ -207,15 +207,19 @@ stateDiagram-v2
 
 ```json
 {
-  "documents": [{ "id": "…", "name": "我的任务", "folderId": null, "createdAt": "…" }],
-  "folders":   [{ "id": "…", "name": "工作", "parentId": null, "createdAt": "…" }],
+  "schemaVersion": 3,
+  "documents": [{ "id": "…", "name": "我的任务", "folderId": null, "position": 2048, "createdAt": "…" }],
+  "folders":   [{ "id": "…", "name": "工作", "parentId": null, "position": 1024, "createdAt": "…" }],
   "lastOpened": "…",
   "trash": [{ "id": "…", "name": "…", "createdAt": "…", "deletedAt": "…" }],
-  "trashFolders": [{ "id": "…", "name": "工作", "deletedAt": "…", "folders": [], "documents": [] }]
+  "trashFolders": [{ "id": "…", "name": "工作", "deletedAt": "…", "folders": [], "documents": [] }],
+  "trashRetentionDays": 30
 }
 ```
 
 - 目录只存在于索引里（可任意嵌套），文档数据仍在 `docs/{id}.db`；
+- **侧边栏排序（v0.6）**：同级目录与文档共享 `position` 坐标（步长 1024），侧边栏按 `position` 升序渲染；拖拽排序通过 `move_document` / `move_folder` 传入相邻位置中点。新建或「移动到…」默认放到同级最上方（`min - 1024`）。索引 schema v2 → v3 迁移时，按旧展示顺序（同级目录在前、文档在后）一次性分配坐标。
+- **回收站自动清理（v0.6）**：`trashRetentionDays` 为保留天数（默认 30，0 = 不自动清理）。启动时与每小时的维护线程按 `deletedAt` 清理过期条目（文档文件一并物理删除），设置页可修改。
 - **删除目录 = 整个目录进回收站**：`trashFolders` 里保存该目录子树的全部 `FolderMeta` 与 `DocMeta`（含原始 id 与父子关系），文档文件移入 `trash/`；
 - **恢复目录**：按快照重建目录结构与文档归属，文件移回 `docs/`；若原父目录已不存在则回到根层级；
 - 至少保留一个活动文档，删除目录若会导致没有文档则拒绝（`LastDocument`）。

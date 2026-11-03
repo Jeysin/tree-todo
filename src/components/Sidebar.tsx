@@ -1,7 +1,8 @@
 /**
- * 左侧文档边栏（docs/05 M3 / v0.5）：
+ * 左侧文档边栏（docs/05 M3 / v0.5 / v0.6）：
  * - 目录层级树：目录可嵌套，目录下可新建目录 / 文档；
- * - 右键菜单：新建、导出、导入、重命名、删除；
+ * - 拖拽调整同级顺序，或拖进 / 拖出目录；
+ * - 右键菜单：新建、导出、导入、重命名、删除；空白处右键可新建；
  * - 宽度可拖拽并记忆（localStorage）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,6 +24,7 @@ import {
 } from 'lucide-react';
 
 import { AppIcon } from './AppIcon';
+import { ipc } from '../ipc';
 import { useTodoStore } from '../stores/todoStore';
 import type { DocMeta, FolderMeta } from '../ipc/types';
 
@@ -60,30 +62,52 @@ function persist(key: string, value: unknown): void {
   }
 }
 
+type ItemKind = 'folder' | 'doc';
+
 interface TreeRow {
-  kind: 'folder' | 'doc';
+  kind: ItemKind;
   id: string;
   name: string;
   depth: number;
+  position: number;
+  createdAt: string;
   folder?: FolderMeta;
   doc?: DocMeta;
 }
 
-interface MenuState {
-  x: number;
-  y: number;
-  kind: 'folder' | 'doc';
+/** 拖拽落点：行上方 / 行下方 / 拖进目录。 */
+interface DropTarget {
+  kind: ItemKind;
   id: string;
-  name: string;
+  zone: 'before' | 'after' | 'into';
 }
 
+type MenuState =
+  | { x: number; y: number; kind: 'folder'; id: string; name: string }
+  | { x: number; y: number; kind: 'doc'; id: string; name: string }
+  | { x: number; y: number; kind: 'blank' };
+
 interface Editing {
-  kind: 'folder' | 'doc';
+  kind: ItemKind;
   id: string;
 }
 
 /** 侧边栏选中项：目录选中决定「+」的落点，文档选中即当前打开的文档。 */
-type Selection = { kind: 'folder' | 'doc'; id: string } | null;
+type Selection = { kind: ItemKind; id: string } | null;
+
+const NEW_DOC_NAME = '未命名文档';
+const NEW_FOLDER_NAME = '未命名目录';
+
+/** 同级排序：先按 position，冲突（旧数据）时目录在前、再按创建时间与名称。 */
+function compareSiblings(
+  a: { kind: ItemKind; position: number; createdAt: string; name: string },
+  b: { kind: ItemKind; position: number; createdAt: string; name: string },
+): number {
+  if (a.position !== b.position) return a.position - b.position;
+  if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
+  if (a.createdAt !== b.createdAt) return a.createdAt.localeCompare(b.createdAt);
+  return a.name.localeCompare(b.name);
+}
 
 export function Sidebar() {
   const documents = useTodoStore(s => s.documents);
@@ -114,6 +138,10 @@ export function Sidebar() {
   /** 侧边栏里当前选中的目录或文档（单击切换，互斥）。 */
   const [selection, setSelection] = useState<Selection>(null);
   const [addMenu, setAddMenu] = useState(false);
+  /** 拖拽源 / 当前落点（HTML5 拖拽，用于排序与换目录）。 */
+  const [drag, setDrag] = useState<{ kind: ItemKind; id: string } | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  const [version, setVersion] = useState('');
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const widthRef = useRef(width);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -122,45 +150,88 @@ export function Sidebar() {
   const cancelRenameRef = useRef(false);
   widthRef.current = width;
 
-  const tree = useMemo<TreeRow[]>(() => {
-    const foldersByParent = new Map<string | null, FolderMeta[]>();
+  /** 每个父级下目录与文档合并排序后的条目（v0.6：共享 position 坐标）。 */
+  const siblingsByParent = useMemo(() => {
+    type Entry = {
+      kind: ItemKind;
+      id: string;
+      name: string;
+      position: number;
+      createdAt: string;
+      folder?: FolderMeta;
+      doc?: DocMeta;
+    };
+    const map = new Map<string | null, Entry[]>();
+    const push = (parent: string | null, entry: Entry) => {
+      (map.get(parent) ?? map.set(parent, []).get(parent)!).push(entry);
+    };
     for (const f of folders) {
-      const key = f.parentId ?? null;
-      (foldersByParent.get(key) ?? foldersByParent.set(key, []).get(key)!).push(f);
+      push(f.parentId ?? null, {
+        kind: 'folder',
+        id: f.id,
+        name: f.name,
+        position: f.position,
+        createdAt: f.createdAt,
+        folder: f,
+      });
     }
-    const docsByFolder = new Map<string | null, DocMeta[]>();
     for (const d of documents) {
-      const key = d.folderId ?? null;
-      (docsByFolder.get(key) ?? docsByFolder.set(key, []).get(key)!).push(d);
+      push(d.folderId ?? null, {
+        kind: 'doc',
+        id: d.id,
+        name: d.name,
+        position: d.position,
+        createdAt: d.createdAt,
+        doc: d,
+      });
     }
+    for (const list of map.values()) list.sort(compareSiblings);
+    return map;
+  }, [documents, folders]);
+
+  const tree = useMemo<TreeRow[]>(() => {
     const rows: TreeRow[] = [];
     const walk = (parentId: string | null, depth: number) => {
-      for (const f of foldersByParent.get(parentId) ?? []) {
-        rows.push({ kind: 'folder', id: f.id, name: f.name, depth, folder: f });
-        if (!collapsed.has(f.id)) walk(f.id, depth + 1);
-      }
-      for (const d of docsByFolder.get(parentId) ?? []) {
-        rows.push({ kind: 'doc', id: d.id, name: d.name, depth, doc: d });
+      for (const e of siblingsByParent.get(parentId) ?? []) {
+        rows.push({
+          kind: e.kind,
+          id: e.id,
+          name: e.name,
+          depth,
+          position: e.position,
+          createdAt: e.createdAt,
+          folder: e.folder,
+          doc: e.doc,
+        });
+        if (e.kind === 'folder' && !collapsed.has(e.id)) walk(e.id, depth + 1);
       }
     };
     walk(null, 0);
     return rows;
-  }, [documents, folders, collapsed]);
+  }, [siblingsByParent, collapsed]);
 
-  /** 展平目录树（不展开/折叠），用于「移动到…」的目标列表。 */
+  /** 展平目录树（不展开/折叠、按同级排序），用于「移动到…」的目标列表。 */
   const flatFolders = useMemo(() => {
     const out: { id: string; name: string; depth: number }[] = [];
     const walk = (parentId: string | null, depth: number) => {
-      for (const f of folders) {
-        if ((f.parentId ?? null) === parentId) {
-          out.push({ id: f.id, name: f.name, depth });
-          walk(f.id, depth + 1);
+      for (const e of siblingsByParent.get(parentId) ?? []) {
+        if (e.kind === 'folder') {
+          out.push({ id: e.id, name: e.name, depth });
+          walk(e.id, depth + 1);
         }
       }
     };
     walk(null, 0);
     return out;
-  }, [folders]);
+  }, [siblingsByParent]);
+
+  // 左上角版本号（取自 Tauri 包版本）。
+  useEffect(() => {
+    void ipc
+      .getAppVersion()
+      .then(v => setVersion(v))
+      .catch(() => {});
+  }, []);
 
   const currentDoc = documents.find(d => d.id === currentDocId) ?? null;
   const addTargetId =
@@ -185,7 +256,7 @@ export function Sidebar() {
 
   /** 移动目标：目录不能移进自己或自己的子孙。 */
   const moveTargets = useMemo(() => {
-    if (!menu) return [];
+    if (!menu || menu.kind === 'blank') return [];
     if (menu.kind !== 'folder') return flatFolders;
     const excluded = new Set<string>();
     const collect = (id: string) => {
@@ -219,9 +290,12 @@ export function Sidebar() {
     document.body.style.userSelect = 'none';
   };
   const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, drag.startWidth + e.clientX - drag.startX));
+    const session = dragRef.current;
+    if (!session) return;
+    const next = Math.min(
+      MAX_WIDTH,
+      Math.max(MIN_WIDTH, session.startWidth + e.clientX - session.startX),
+    );
     setWidth(next);
   };
   const onResizeUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -281,9 +355,18 @@ export function Sidebar() {
     });
   };
 
-  const beginRename = (kind: 'folder' | 'doc', id: string, name: string) => {
+  const beginRename = (kind: ItemKind, id: string, name: string) => {
     setEditing({ kind, id });
     setDraftName(name);
+  };
+
+  /**
+   * 新建后的命名：输入框留空并聚焦，用户直接输入即可；
+   * 不输入直接失焦 / Esc 时保留后端的默认名称（未命名文档 / 未命名目录）。
+   */
+  const beginNewName = (kind: ItemKind, id: string) => {
+    setEditing({ kind, id });
+    setDraftName('');
   };
 
   const commitRename = () => {
@@ -300,34 +383,31 @@ export function Sidebar() {
     }
   };
 
+  const expandFolder = (folderId: string) => {
+    setCollapsed(prev => {
+      if (!prev.has(folderId)) return prev;
+      const next = new Set(prev);
+      next.delete(folderId);
+      persist(COLLAPSED_KEY, Array.from(next));
+      return next;
+    });
+  };
+
   const handleNewFolder = async (parentId: string | null) => {
-    const meta = await createFolder('新目录', parentId);
+    const meta = await createFolder(NEW_FOLDER_NAME, parentId);
     if (!meta) return;
-    if (parentId) {
-      setCollapsed(prev => {
-        const next = new Set(prev);
-        next.delete(parentId);
-        persist(COLLAPSED_KEY, Array.from(next));
-        return next;
-      });
-    }
+    if (parentId) expandFolder(parentId);
     setSelection({ kind: 'folder', id: meta.id });
-    beginRename('folder', meta.id, meta.name);
+    beginNewName('folder', meta.id);
   };
 
   const handleNewDocument = (folderId: string | null) => {
-    if (folderId) {
-      // 在目录里新建时确保该目录展开，否则新文档看不见。
-      setCollapsed(prev => {
-        if (!prev.has(folderId)) return prev;
-        const next = new Set(prev);
-        next.delete(folderId);
-        persist(COLLAPSED_KEY, Array.from(next));
-        return next;
-      });
-    }
-    void createDocument('新文档', folderId).then(id => {
-      if (id) setSelection({ kind: 'doc', id });
+    // 在目录里新建时确保该目录展开，否则新文档看不见。
+    if (folderId) expandFolder(folderId);
+    void createDocument(NEW_DOC_NAME, folderId).then(id => {
+      if (!id) return;
+      setSelection({ kind: 'doc', id });
+      beginNewName('doc', id);
     });
   };
 
@@ -379,9 +459,113 @@ export function Sidebar() {
     const target = menu;
     setMenu(null);
     setMoveOpen(false);
-    if (!target) return;
+    if (!target || target.kind === 'blank') return;
     if (target.kind === 'folder') void moveFolder(target.id, targetFolderId);
     else void moveDocument(target.id, targetFolderId);
+  };
+
+  // ── 拖拽排序 / 换目录 ──
+  const rowParentId = (row: TreeRow): string | null =>
+    row.kind === 'folder' ? (row.folder?.parentId ?? null) : (row.doc?.folderId ?? null);
+
+  /** 目录 ancestorId 是否包含 folderId（含自身）。 */
+  const folderContains = useCallback(
+    (ancestorId: string, folderId: string | null): boolean => {
+      let cur = folderId;
+      const seen = new Set<string>();
+      while (cur && !seen.has(cur)) {
+        if (cur === ancestorId) return true;
+        seen.add(cur);
+        cur = folders.find(f => f.id === cur)?.parentId ?? null;
+      }
+      return false;
+    },
+    [folders],
+  );
+
+  const canDrop = (
+    source: { kind: ItemKind; id: string },
+    row: TreeRow,
+    zone: 'before' | 'after' | 'into',
+  ): boolean => {
+    if (source.kind === row.kind && source.id === row.id) return false;
+    // 文档没有子树，可以落到任意行（拖到目录中部即移入该目录）。
+    if (source.kind !== 'folder') return true;
+    // 目录不能拖进自己或自己的子孙（包括在子树内部做兄弟排序）。
+    if (zone === 'into') return row.kind === 'folder' && !folderContains(source.id, row.id);
+    if (folderContains(source.id, row.id)) return false;
+    const parent = rowParentId(row);
+    if (parent && folderContains(source.id, parent)) return false;
+    return true;
+  };
+
+  /** 落点对应的同级位置（before/after 取相邻位置中点；into 交给后端置顶）。 */
+  const dropPositionFor = (
+    target: TreeRow,
+    zone: 'before' | 'after' | 'into',
+    source: { kind: ItemKind; id: string },
+  ): number | null => {
+    if (zone === 'into') return null;
+    const parentId = rowParentId(target);
+    const list = (siblingsByParent.get(parentId) ?? []).filter(
+      e => !(e.kind === source.kind && e.id === source.id),
+    );
+    const idx = list.findIndex(e => e.kind === target.kind && e.id === target.id);
+    if (idx < 0) return null;
+    if (zone === 'before') {
+      const prev = idx > 0 ? list[idx - 1] : null;
+      return prev ? (prev.position + target.position) / 2 : target.position - 1024;
+    }
+    const next = idx + 1 < list.length ? list[idx + 1] : null;
+    return next ? (target.position + next.position) / 2 : target.position + 1024;
+  };
+
+  const handleDragStart = (e: React.DragEvent, row: TreeRow) => {
+    if (editing) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', row.id);
+    setDrag({ kind: row.kind, id: row.id });
+    setMenu(null);
+    setAddMenu(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent, row: TreeRow) => {
+    if (!drag) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = (e.clientY - rect.top) / Math.max(1, rect.height);
+    let zone: 'before' | 'after' | 'into';
+    if (row.kind === 'folder') {
+      zone = ratio < 0.28 ? 'before' : ratio > 0.72 ? 'after' : 'into';
+    } else {
+      zone = ratio < 0.5 ? 'before' : 'after';
+    }
+    if (!canDrop(drag, row, zone)) {
+      setDropTarget(null);
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTarget(prev =>
+      prev && prev.kind === row.kind && prev.id === row.id && prev.zone === zone
+        ? prev
+        : { kind: row.kind, id: row.id, zone },
+    );
+  };
+
+  const handleDrop = (e: React.DragEvent, row: TreeRow) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const source = drag;
+    const target = dropTarget;
+    setDrag(null);
+    setDropTarget(null);
+    if (!source || !target || target.kind !== row.kind || target.id !== row.id) return;
+    if (!canDrop(source, row, target.zone)) return;
+    if (target.zone === 'into') expandFolder(row.id);
+    const parentId = target.zone === 'into' ? row.id : rowParentId(row);
+    const position = dropPositionFor(row, target.zone, source);
+    if (source.kind === 'folder') void moveFolder(source.id, parentId, position);
+    else void moveDocument(source.id, parentId, position);
   };
 
   const menuItemClass =
@@ -395,16 +579,44 @@ export function Sidebar() {
       <div className="relative flex items-center gap-2 px-3.5 h-12 border-b border-border shrink-0">
         <AppIcon size={22} />
         <span className="text-[15px] font-semibold tracking-tight text-primary select-none">
-          tree-todo
+          Tree Todo
         </span>
+        {version && (
+          <span
+            className="text-[11px] text-muted/80 tabular-nums select-none"
+            title={`Tree Todo v${version}`}
+          >
+            v{version}
+          </span>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto py-2.5 px-2">
+      <div
+        className="flex-1 overflow-y-auto py-2.5 px-2"
+        onClick={e => {
+          const el = e.target as HTMLElement;
+          if (el.closest('[data-sidebar-row]') || el.closest('[data-sidebar-action]')) return;
+          setSelection(null);
+        }}
+        onContextMenu={e => {
+          const el = e.target as HTMLElement;
+          if (el.closest('[data-sidebar-row]') || el.closest('[data-sidebar-action]')) return;
+          e.preventDefault();
+          setAddMenu(false);
+          setMoveOpen(false);
+          setMenu({
+            x: Math.min(e.clientX, window.innerWidth - 208),
+            y: Math.min(e.clientY, window.innerHeight - 132),
+            kind: 'blank',
+          });
+        }}
+      >
         <div ref={addMenuRef} className="relative flex items-center justify-between px-2 pb-1.5">
           <span className="text-[11px] font-medium text-muted uppercase tracking-wider select-none">
             文档
           </span>
           <button
+            data-sidebar-action
             onClick={() => setAddMenu(v => !v)}
             className="w-5 h-5 rounded flex items-center justify-center text-muted hover:text-primary hover:bg-base transition-colors"
             title="新建"
@@ -412,7 +624,10 @@ export function Sidebar() {
             <Plus className="w-3.5 h-3.5" />
           </button>
           {addMenu && (
-            <div className="absolute right-0 top-6 z-50 w-44 rounded-lg border border-border bg-elevated shadow-xl py-1">
+            <div
+              data-sidebar-action
+              className="absolute right-0 top-6 z-50 w-44 rounded-lg border border-border bg-elevated shadow-xl py-1"
+            >
               <div className="px-3 pt-1 pb-1.5 text-[11px] text-muted select-none truncate">
                 在「{addTargetName}」下新建
               </div>
@@ -445,9 +660,27 @@ export function Sidebar() {
           const isFolder = row.kind === 'folder';
           const selected = selection?.kind === row.kind && selection.id === row.id;
           const open = isFolder && !collapsed.has(row.id);
+          const isDragSource = drag?.kind === row.kind && drag.id === row.id;
+          const dropZone =
+            dropTarget?.kind === row.kind && dropTarget.id === row.id ? dropTarget.zone : null;
           return (
             <div
               key={`${row.kind}-${row.id}`}
+              data-sidebar-row
+              draggable={!isEditing}
+              onDragStart={e => handleDragStart(e, row)}
+              onDragEnd={() => {
+                setDrag(null);
+                setDropTarget(null);
+              }}
+              onDragOver={e => handleDragOver(e, row)}
+              onDragLeave={e => {
+                if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                setDropTarget(prev =>
+                  prev && prev.kind === row.kind && prev.id === row.id ? null : prev,
+                );
+              }}
+              onDrop={e => handleDrop(e, row)}
               onClick={() => {
                 if (isEditing) return;
                 if (isFolder) {
@@ -466,10 +699,12 @@ export function Sidebar() {
               onContextMenu={e => openMenu(e, row)}
               style={{ paddingLeft: 8 + row.depth * 12 }}
               className={[
-                'group flex items-center gap-1.5 pr-2 h-7 rounded-md cursor-pointer text-[13px] transition-colors',
+                'group relative flex items-center gap-1.5 pr-2 h-7 rounded-md cursor-pointer text-[13px] transition-colors',
                 selected
                   ? 'bg-accent/12 text-primary font-medium'
                   : 'text-muted hover:bg-base hover:text-primary',
+                isDragSource ? 'opacity-40' : '',
+                dropZone === 'into' ? 'bg-accent/15 text-primary ring-1 ring-accent/40' : '',
               ].join(' ')}
               title={isFolder ? row.name : selected ? `${row.name}（双击重命名）` : row.name}
             >
@@ -519,6 +754,7 @@ export function Sidebar() {
                 <input
                   autoFocus
                   value={draftName}
+                  placeholder={isFolder ? NEW_FOLDER_NAME : NEW_DOC_NAME}
                   onChange={e => setDraftName(e.target.value)}
                   onFocus={e => e.currentTarget.select()}
                   onBlur={() => {
@@ -537,7 +773,7 @@ export function Sidebar() {
                       setEditing(null);
                     }
                   }}
-                  className="flex-1 min-w-0 bg-transparent outline-none text-primary border-b border-accent/60"
+                  className="flex-1 min-w-0 bg-transparent outline-none text-primary border-b border-accent/60 placeholder:text-muted/50"
                 />
               ) : (
                 <span className="flex-1 truncate">{row.name}</span>
@@ -554,6 +790,13 @@ export function Sidebar() {
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
+              )}
+
+              {dropZone === 'before' && (
+                <span className="pointer-events-none absolute left-2 right-2 -top-[2px] h-0.5 rounded-full bg-accent" />
+              )}
+              {dropZone === 'after' && (
+                <span className="pointer-events-none absolute left-2 right-2 -bottom-[2px] h-0.5 rounded-full bg-accent" />
               )}
             </div>
           );
@@ -606,7 +849,30 @@ export function Sidebar() {
           className="fixed z-50 w-48 rounded-lg border border-border bg-elevated shadow-xl py-1"
           onContextMenu={e => e.preventDefault()}
         >
-          {menu.kind === 'folder' ? (
+          {menu.kind === 'blank' ? (
+            <>
+              <button
+                onClick={() => {
+                  setMenu(null);
+                  handleNewDocument(null);
+                }}
+                className={menuItemClass}
+              >
+                <FileText className="w-3.5 h-3.5 text-muted" />
+                新建文档
+              </button>
+              <button
+                onClick={() => {
+                  setMenu(null);
+                  void handleNewFolder(null);
+                }}
+                className={menuItemClass}
+              >
+                <FolderPlus className="w-3.5 h-3.5 text-muted" />
+                新建目录
+              </button>
+            </>
+          ) : menu.kind === 'folder' ? (
             <>
               <button
                 onClick={() => {

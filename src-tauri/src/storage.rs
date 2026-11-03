@@ -10,6 +10,56 @@ use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::model::{DocIndex, DocMeta, FolderMeta, TrashDoc, TrashFolder, TrashItem};
 
+/// 文档索引结构版本（v3：侧边栏排序 + 回收站保留天数）。
+pub const INDEX_SCHEMA_VERSION: u32 = 3;
+
+/// 侧边栏同级排序步长（与节点分数定位一致）。
+const POSITION_STEP: f64 = 1024.0;
+
+/// v2 → v3 迁移：按旧的展示顺序（目录在前、文档在后，各自按数组顺序）
+/// 为同级目录与文档分配共享的 position 坐标。
+fn migrate_index(idx: &mut DocIndex) {
+    if idx.schema_version < 2 {
+        idx.schema_version = 2;
+    }
+    if idx.schema_version < INDEX_SCHEMA_VERSION {
+        let mut cursors: std::collections::HashMap<Option<String>, f64> =
+            std::collections::HashMap::new();
+        for folder in &mut idx.folders {
+            let cursor = cursors.entry(folder.parent_id.clone()).or_insert(0.0);
+            *cursor += POSITION_STEP;
+            folder.position = *cursor;
+        }
+        for doc in &mut idx.documents {
+            let cursor = cursors.entry(doc.folder_id.clone()).or_insert(0.0);
+            *cursor += POSITION_STEP;
+            doc.position = *cursor;
+        }
+        idx.schema_version = INDEX_SCHEMA_VERSION;
+    }
+}
+
+/// 同级最上方的新位置（`min - step`；同级为空时从 `step` 起）。
+fn top_position(idx: &DocIndex, parent: Option<&str>) -> f64 {
+    let folders = idx
+        .folders
+        .iter()
+        .filter(|f| f.parent_id.as_deref() == parent)
+        .map(|f| f.position);
+    let docs = idx
+        .documents
+        .iter()
+        .filter(|d| d.folder_id.as_deref() == parent)
+        .map(|d| d.position);
+    let min = folders.chain(docs).fold(None::<f64>, |acc, p| {
+        Some(acc.map_or(p, |a| a.min(p)))
+    });
+    match min {
+        Some(m) => m - POSITION_STEP,
+        None => POSITION_STEP,
+    }
+}
+
 #[derive(Clone)]
 pub struct DocStore {
     data_dir: PathBuf,
@@ -141,16 +191,16 @@ impl DocStore {
     }
 
     /// 首次启动：确保索引与默认文档存在。
-    /// - `documents.json` 已有内容 → 直接返回；
+    /// - `documents.json` 已有内容 → 按 schema 版本补齐字段后返回；
     /// - 否则创建 docs/ 目录；若存在旧的单库（tree-todo.db + WAL/SHM）则迁移为默认文档，否则新建空库。
     pub fn ensure(&self) -> AppResult<DocIndex> {
         fs::create_dir_all(self.docs_dir())?;
         fs::create_dir_all(self.trash_dir())?;
         let existing = self.load_index()?;
         if !existing.documents.is_empty() {
-            if existing.schema_version < 2 {
+            if existing.schema_version < INDEX_SCHEMA_VERSION {
                 let mut upgraded = existing;
-                upgraded.schema_version = 2;
+                migrate_index(&mut upgraded);
                 self.save_index(&upgraded)?;
                 return Ok(upgraded);
             }
@@ -175,18 +225,20 @@ impl DocStore {
         }
 
         let idx = DocIndex {
-            schema_version: 2,
+            schema_version: INDEX_SCHEMA_VERSION,
             documents: vec![DocMeta {
                 id: id.clone(),
                 name: "我的任务".to_string(),
                 folder_id: None,
                 created_at: Utc::now().to_rfc3339(),
+                position: 1024.0,
                 workspace: None,
             }],
             folders: Vec::new(),
             last_opened: Some(id),
             trash: Vec::new(),
             trash_folders: Vec::new(),
+            trash_retention_days: 30,
         };
         self.save_index(&idx)?;
         Ok(idx)
@@ -202,11 +254,13 @@ impl DocStore {
         }
         let id = uuid::Uuid::new_v4().to_string();
         let _ = Db::open(&self.db_path(&id))?;
+        let position = top_position(&idx, folder_id.as_deref());
         let meta = DocMeta {
             id,
             name: name.trim().to_string(),
             folder_id,
             created_at: Utc::now().to_rfc3339(),
+            position,
             workspace: None,
         };
         idx.documents.push(meta.clone());
@@ -222,11 +276,13 @@ impl DocStore {
         {
             return Err(AppError::NodeNotFound(format!("目录 {pid}")));
         }
+        let position = top_position(&idx, parent_id.as_deref());
         let meta = FolderMeta {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.trim().to_string(),
             parent_id,
             created_at: Utc::now().to_rfc3339(),
+            position,
         };
         idx.folders.push(meta.clone());
         self.save_index(&idx)?;
@@ -276,27 +332,42 @@ impl DocStore {
         Ok((folder_ids, doc_ids))
     }
 
-    /// 把文档移动到目录（`folder_id` = None 表示根层级）。
-    pub fn move_document(&self, id: &str, folder_id: Option<String>) -> AppResult<DocMeta> {
+    /// 把文档移动到目录并指定同级位置（`folder_id` = None 表示根层级；
+    /// `position` = None 时放到目标同级最上方）。
+    pub fn move_document(
+        &self,
+        id: &str,
+        folder_id: Option<String>,
+        position: Option<f64>,
+    ) -> AppResult<DocMeta> {
         let mut idx = self.load_index()?;
         if let Some(fid) = folder_id.as_deref()
             && !idx.folders.iter().any(|f| f.id == fid)
         {
             return Err(AppError::NodeNotFound(format!("目录 {fid}")));
         }
+        let target_position =
+            position.unwrap_or_else(|| top_position(&idx, folder_id.as_deref()));
         let doc = idx
             .documents
             .iter_mut()
             .find(|d| d.id == id)
             .ok_or_else(|| AppError::NodeNotFound(format!("文档 {id}")))?;
         doc.folder_id = folder_id;
+        doc.position = target_position;
         let meta = doc.clone();
         self.save_index(&idx)?;
         Ok(meta)
     }
 
-    /// 把目录移动到另一个目录（None = 根层级）；禁止移动到自己或自己的子孙下。
-    pub fn move_folder(&self, id: &str, parent_id: Option<String>) -> AppResult<FolderMeta> {
+    /// 把目录移动到另一个目录并指定同级位置（None = 根层级）；
+    /// 禁止移动到自己或自己的子孙下。
+    pub fn move_folder(
+        &self,
+        id: &str,
+        parent_id: Option<String>,
+        position: Option<f64>,
+    ) -> AppResult<FolderMeta> {
         let mut idx = self.load_index()?;
         if !idx.folders.iter().any(|f| f.id == id) {
             return Err(AppError::NodeNotFound(format!("目录 {id}")));
@@ -313,12 +384,15 @@ impl DocStore {
                 return Err(AppError::CyclicMove);
             }
         }
+        let target_position =
+            position.unwrap_or_else(|| top_position(&idx, parent_id.as_deref()));
         let folder = idx
             .folders
             .iter_mut()
             .find(|f| f.id == id)
             .ok_or_else(|| AppError::NodeNotFound(format!("目录 {id}")))?;
         folder.parent_id = parent_id;
+        folder.position = target_position;
         let meta = folder.clone();
         self.save_index(&idx)?;
         Ok(meta)
@@ -491,12 +565,14 @@ impl DocStore {
             .ok_or_else(|| AppError::NodeNotFound(format!("文档 {id}")))?;
         let doc = idx.trash.remove(pos);
         self.move_doc_files(id, &self.trash_dir(), &self.docs_dir())?;
+        let position = top_position(&idx, None);
         idx.documents.push(DocMeta {
             id: doc.id,
             name: doc.name,
             // 目录可能已被删除：恢复的文档放回根层级，避免指向不存在的目录。
             folder_id: None,
             created_at: doc.created_at,
+            position,
             workspace: None,
         });
         if idx.last_opened.is_none() {
@@ -538,6 +614,59 @@ impl DocStore {
         idx.trash_folders.clear();
         self.save_index(&idx)?;
         Ok(idx)
+    }
+
+    /// 回收站自动清理阈值（天）；0 表示不自动清理。
+    pub fn trash_retention_days(&self) -> AppResult<u32> {
+        Ok(self.load_index()?.trash_retention_days)
+    }
+
+    pub fn set_trash_retention_days(&self, days: u32) -> AppResult<u32> {
+        let mut idx = self.load_index()?;
+        idx.trash_retention_days = days;
+        self.save_index(&idx)?;
+        Ok(days)
+    }
+
+    /// 清理回收站里删除时间超过 `retention_days` 天的内容，返回清理条数。
+    /// 时间戳解析失败的条目不清理（宁可保留也不误删）。
+    pub fn purge_expired_trash(&self, retention_days: u32) -> AppResult<usize> {
+        if retention_days == 0 {
+            return Ok(0);
+        }
+        let mut idx = self.load_index()?;
+        let cutoff = Utc::now() - chrono::Duration::days(i64::from(retention_days));
+        let expired = |deleted_at: &str| -> bool {
+            chrono::DateTime::parse_from_rfc3339(deleted_at)
+                .map(|t| t < cutoff)
+                .unwrap_or(false)
+        };
+
+        let mut removed = 0usize;
+        idx.trash.retain(|doc| {
+            if expired(&doc.deleted_at) {
+                self.remove_trash_files(&doc.id);
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        idx.trash_folders.retain(|folder| {
+            if expired(&folder.deleted_at) {
+                for doc in &folder.documents {
+                    self.remove_trash_files(&doc.id);
+                }
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        if removed > 0 {
+            self.save_index(&idx)?;
+        }
+        Ok(removed)
     }
 
     pub fn set_last_opened(&self, id: &str) -> AppResult<()> {
@@ -689,28 +818,184 @@ mod tests {
         let q4 = store.create_folder("Q4", Some(work.id.clone())).unwrap();
 
         // 文档移进目录 / 移回根
-        let moved = store.move_document(&root_doc.id, Some(q4.id.clone())).unwrap();
+        let moved = store
+            .move_document(&root_doc.id, Some(q4.id.clone()), None)
+            .unwrap();
         assert_eq!(moved.folder_id.as_deref(), Some(q4.id.as_str()));
-        let back = store.move_document(&root_doc.id, None).unwrap();
+        let back = store.move_document(&root_doc.id, None, None).unwrap();
         assert!(back.folder_id.is_none());
 
         // 目录不能移进自己或自己的子孙
         assert!(matches!(
-            store.move_folder(&work.id, Some(work.id.clone())),
+            store.move_folder(&work.id, Some(work.id.clone()), None),
             Err(AppError::CyclicMove)
         ));
         assert!(matches!(
-            store.move_folder(&work.id, Some(q4.id.clone())),
+            store.move_folder(&work.id, Some(q4.id.clone()), None),
             Err(AppError::CyclicMove)
         ));
 
         // 子目录可以提到根，再挂回去
-        let lifted = store.move_folder(&q4.id, None).unwrap();
+        let lifted = store.move_folder(&q4.id, None, None).unwrap();
         assert!(lifted.parent_id.is_none());
         let reattached = store
-            .move_folder(&q4.id, Some(work.id.clone()))
+            .move_folder(&q4.id, Some(work.id.clone()), None)
             .unwrap();
         assert_eq!(reattached.parent_id.as_deref(), Some(work.id.as_str()));
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn migrate_v2_index_assigns_shared_sibling_positions() {
+        let mut idx = DocIndex {
+            schema_version: 2,
+            documents: vec![
+                DocMeta {
+                    id: "root-doc".into(),
+                    name: "根文档".into(),
+                    folder_id: None,
+                    created_at: String::new(),
+                    position: 0.0,
+                    workspace: None,
+                },
+                DocMeta {
+                    id: "nested-doc".into(),
+                    name: "嵌套文档".into(),
+                    folder_id: Some("folder".into()),
+                    created_at: String::new(),
+                    position: 0.0,
+                    workspace: None,
+                },
+            ],
+            folders: vec![FolderMeta {
+                id: "folder".into(),
+                name: "目录".into(),
+                parent_id: None,
+                created_at: String::new(),
+                position: 0.0,
+            }],
+            last_opened: Some("root-doc".into()),
+            trash: Vec::new(),
+            trash_folders: Vec::new(),
+            trash_retention_days: 30,
+        };
+        migrate_index(&mut idx);
+        assert_eq!(idx.schema_version, INDEX_SCHEMA_VERSION);
+        // 旧顺序：同级目录先于文档；根层目录 1024、根文档 2048。
+        assert_eq!(idx.folders[0].position, 1024.0);
+        assert_eq!(idx.documents[0].position, 2048.0);
+        // 目录内独立计数。
+        assert_eq!(idx.documents[1].position, 1024.0);
+    }
+
+    #[test]
+    fn new_items_are_placed_on_top_of_siblings() {
+        let (store, dir) = temp_store();
+        let first = store.ensure().unwrap().documents[0].clone();
+        let second = store.create("第二本", None).unwrap();
+        let folder = store.create_folder("工作", None).unwrap();
+        let nested = store.create("嵌套文档", Some(folder.id.clone())).unwrap();
+
+        let idx = store.load_index().unwrap();
+        let first_now = idx.documents.iter().find(|d| d.id == first.id).unwrap();
+        let second_now = idx.documents.iter().find(|d| d.id == second.id).unwrap();
+        assert!(second_now.position < first_now.position, "新文档应排在最上面");
+        let folder_now = idx.folders.iter().find(|f| f.id == folder.id).unwrap();
+        assert!(
+            folder_now.position < second_now.position,
+            "新目录应排在同级文档之上"
+        );
+        let nested_now = idx.documents.iter().find(|d| d.id == nested.id).unwrap();
+        assert_eq!(nested_now.position, 1024.0, "目录内首个文档从 1024 起");
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn reorder_document_and_folder_by_position() {
+        let (store, dir) = temp_store();
+        let doc_a = store.ensure().unwrap().documents[0].clone();
+        let doc_b = store.create("文档 B", None).unwrap();
+        let folder = store.create_folder("目录", None).unwrap();
+
+        // 先确认新项在顶部，再把它拖到最下面。
+        let idx = store.load_index().unwrap();
+        let bottom = idx
+            .documents
+            .iter()
+            .map(|d| d.position)
+            .fold(f64::NEG_INFINITY, f64::max)
+            + POSITION_STEP;
+        store
+            .move_document(&doc_b.id, None, Some(bottom))
+            .unwrap();
+        store.move_folder(&folder.id, None, Some(0.0)).unwrap();
+
+        let idx = store.load_index().unwrap();
+        let a = idx.documents.iter().find(|d| d.id == doc_a.id).unwrap();
+        let b = idx.documents.iter().find(|d| d.id == doc_b.id).unwrap();
+        let f = idx.folders.iter().find(|x| x.id == folder.id).unwrap();
+        assert!(b.position > a.position);
+        assert!(f.position < a.position);
+
+        // 文档拖进目录并指定位置。
+        let moved = store
+            .move_document(&doc_b.id, Some(folder.id.clone()), Some(512.0))
+            .unwrap();
+        assert_eq!(moved.folder_id.as_deref(), Some(folder.id.as_str()));
+        assert_eq!(moved.position, 512.0);
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn purge_expired_trash_respects_retention() {
+        let (store, dir) = temp_store();
+        let first = store.ensure().unwrap().documents[0].clone();
+        let second = store.create("第二本", None).unwrap();
+        store.trash(&first.id).unwrap();
+
+        // 把删除时间改成 40 天前，30 天阈值应清掉它。
+        let mut idx = store.load_index().unwrap();
+        idx.trash[0].deleted_at = (Utc::now() - chrono::Duration::days(40)).to_rfc3339();
+        store.save_index(&idx).unwrap();
+        let removed = store.purge_expired_trash(30).unwrap();
+        assert_eq!(removed, 1);
+        let idx = store.load_index().unwrap();
+        assert!(idx.trash.is_empty());
+        assert!(!store.trash_base(&first.id).with_extension("db").exists());
+        assert_eq!(idx.documents.len(), 1);
+
+        // 删除时间较新的条目不受影响；0 表示关闭自动清理。
+        assert!(matches!(
+            store.trash(&second.id),
+            Err(AppError::LastDocument)
+        ));
+        assert_eq!(store.purge_expired_trash(0).unwrap(), 0);
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn purge_expired_trash_removes_whole_folder_entry() {
+        let (store, dir) = temp_store();
+        let root_doc = store.ensure().unwrap().documents[0].clone();
+        let folder = store.create_folder("工作", None).unwrap();
+        let doc = store.create("周报", Some(folder.id.clone())).unwrap();
+        store.delete_folder(&folder.id).unwrap();
+
+        let mut idx = store.load_index().unwrap();
+        idx.trash_folders[0].deleted_at = (Utc::now() - chrono::Duration::days(40)).to_rfc3339();
+        store.save_index(&idx).unwrap();
+        let removed = store.purge_expired_trash(30).unwrap();
+        assert_eq!(removed, 1);
+
+        let idx = store.load_index().unwrap();
+        assert!(idx.trash_folders.is_empty());
+        assert_eq!(idx.documents.len(), 1);
+        assert_eq!(idx.documents[0].id, root_doc.id);
+        assert!(!store.trash_base(&doc.id).with_extension("db").exists());
 
         cleanup(&dir);
     }

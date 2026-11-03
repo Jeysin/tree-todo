@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::model::{DocIndex, DocMeta, FolderMeta};
+use crate::model::{AppSettings, DocIndex, DocMeta, FolderMeta};
 use crate::{AppState, CurrentDoc};
 
 #[tauri::command]
@@ -42,24 +42,52 @@ pub fn rename_folder(state: State<'_, AppState>, id: String, name: String) -> Ap
     state.docs.rename_folder(&id, &name)
 }
 
-/// 把文档移动到目录（folder_id = None 表示根层级）。
+/// 把文档移动到目录并指定同级位置（folder_id = None 表示根层级；
+/// position = None 时放到目标同级最上方）。
 #[tauri::command]
 pub fn move_document(
     state: State<'_, AppState>,
     id: String,
     folder_id: Option<String>,
+    position: Option<f64>,
 ) -> AppResult<DocMeta> {
-    state.docs.move_document(&id, folder_id)
+    state.docs.move_document(&id, folder_id, position)
 }
 
-/// 把目录移动到另一个目录（parent_id = None 表示根层级）；禁止移进自身子树。
+/// 把目录移动到另一个目录并指定同级位置（parent_id = None 表示根层级）；
+/// 禁止移进自身子树。
 #[tauri::command]
 pub fn move_folder(
     state: State<'_, AppState>,
     id: String,
     parent_id: Option<String>,
+    position: Option<f64>,
 ) -> AppResult<FolderMeta> {
-    state.docs.move_folder(&id, parent_id)
+    state.docs.move_folder(&id, parent_id, position)
+}
+
+/// 应用设置（设置页读取）。
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> AppResult<AppSettings> {
+    Ok(AppSettings {
+        trash_retention_days: state.docs.trash_retention_days()?,
+    })
+}
+
+/// 修改回收站保留天数并立即清理过期条目（0 = 不自动清理）。
+#[tauri::command]
+pub fn set_trash_retention_days(
+    state: State<'_, AppState>,
+    days: u32,
+) -> AppResult<AppSettings> {
+    if days > 3650 {
+        return Err(AppError::BadRequest("保留天数需在 0–3650 之间".into()));
+    }
+    state.docs.set_trash_retention_days(days)?;
+    state.docs.purge_expired_trash(days)?;
+    Ok(AppSettings {
+        trash_retention_days: days,
+    })
 }
 
 /// 删除目录：目录与子目录移除，里面的文档移入回收站（可恢复）。

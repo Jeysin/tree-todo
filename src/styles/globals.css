@@ -196,6 +196,16 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* 内联编辑框必须与节点文本一样保留换行：
+ * Mind Elixir 用 div[contenteditable] + textContent 回填内容，默认 white-space 会把
+ * 文本里的 \n 折叠成空格，保存时 innerText 再读回来就把换行吞掉了。 */
+.mind-map-container #input-box {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 320px;
+}
+
 .mind-map-container me-tpc.todo-done {
   opacity: 0.5;
 }

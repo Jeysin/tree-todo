@@ -92,7 +92,7 @@ pub fn run() {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("tree-todo")
+            .title("Tree Todo")
             .inner_size(1280.0, 800.0)
             .min_inner_size(800.0, 600.0);
             if let Ok(port) = std::env::var("TREE_TODO_CDP_PORT")
@@ -113,6 +113,11 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let docs = DocStore::new(data_dir.clone());
             let idx = docs.ensure()?;
+            // 回收站自动清理（v0.6）：启动时按索引里的保留天数清理一次，之后每小时随
+            // expire_loop 再扫一遍；0 表示用户关闭了自动清理。
+            if let Err(err) = docs.purge_expired_trash(idx.trash_retention_days) {
+                eprintln!("回收站自动清理失败: {err}");
+            }
             let current_id = idx
                 .last_opened
                 .clone()
@@ -170,6 +175,8 @@ pub fn run() {
             commands::rename_folder,
             commands::move_folder,
             commands::move_document,
+            commands::get_settings,
+            commands::set_trash_retention_days,
             commands::delete_folder,
             commands::switch_document,
             commands::get_current_document,
@@ -240,6 +247,10 @@ fn expire_loop(docs: &DocStore) {
         let Ok(idx) = docs.load_index() else {
             continue;
         };
+        // 回收站自动清理也搭这班每小时的车（启动时已清理过一次）。
+        if let Err(e) = docs.purge_expired_trash(idx.trash_retention_days) {
+            eprintln!("回收站自动清理失败: {e}");
+        }
         for doc in &idx.documents {
             let path = docs.db_path(&doc.id);
             if !path.exists() {

@@ -267,6 +267,9 @@ pub struct DocMeta {
     #[serde(default)]
     pub folder_id: Option<String>,
     pub created_at: String,
+    /// 侧边栏同级排序（v0.6：分数定位法，目录与文档共享坐标）。
+    #[serde(default)]
+    pub position: f64,
     /// v1.1：文档默认工作区（索引缓存；文档库 doc_meta 有副本）。
     #[serde(default)]
     pub workspace: Option<String>,
@@ -281,13 +284,16 @@ pub struct FolderMeta {
     #[serde(default)]
     pub parent_id: Option<String>,
     pub created_at: String,
+    /// 侧边栏同级排序（v0.6：分数定位法，目录与文档共享坐标）。
+    #[serde(default)]
+    pub position: f64,
 }
 
 /// 文档索引（app_data_dir/documents.json）。
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocIndex {
-    /// v1.1：索引结构版本（缺失按 1 处理）。
+    /// 索引结构版本（缺失按 1 处理）。v3：侧边栏排序 + 回收站保留天数。
     #[serde(default = "default_index_schema")]
     pub schema_version: u32,
     pub documents: Vec<DocMeta>,
@@ -301,6 +307,31 @@ pub struct DocIndex {
     /// v0.6：被删除的目录（连同结构与文档），恢复时整体还原。
     #[serde(default)]
     pub trash_folders: Vec<TrashFolder>,
+    /// v0.6：回收站自动清理阈值（天）；0 表示不自动清理。
+    #[serde(default = "default_trash_retention_days")]
+    pub trash_retention_days: u32,
+}
+
+impl Default for DocIndex {
+    fn default() -> Self {
+        Self {
+            schema_version: 3,
+            documents: Vec::new(),
+            folders: Vec::new(),
+            last_opened: None,
+            trash: Vec::new(),
+            trash_folders: Vec::new(),
+            trash_retention_days: default_trash_retention_days(),
+        }
+    }
+}
+
+/// 应用设置（设置页读取 / 修改）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    /// 回收站自动清理阈值（天）；0 表示不自动清理。
+    pub trash_retention_days: u32,
 }
 
 /// 回收站里的目录条目：保留整套目录结构与文档元数据（含原始 id 与父子关系）。
@@ -387,6 +418,9 @@ fn default_position() -> f64 {
 }
 fn default_index_schema() -> u32 {
     1
+}
+fn default_trash_retention_days() -> u32 {
+    30
 }
 
 impl From<&Node> for ImportNode {

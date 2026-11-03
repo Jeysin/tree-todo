@@ -125,17 +125,21 @@
 - **备份 = 导出**（v0.5）：应用不再生成自动/手动备份，备份与迁移统一通过「导出当前文档 / 目录 / 全部」完成，导入即整体还原。
 - **损坏兜底**：SQLite 打开失败时不静默重置，直接报错并提示从导出文件恢复。
 
-## 6. 侧边栏：文档与目录（v0.5）
+## 6. 侧边栏：文档与目录（v0.5 / v0.6）
 
 - 层级：目录可无限嵌套，目录下可新建目录或文档；目录只存在于 `documents.json` 索引，文档数据仍是独立 SQLite 文件。
-- 交互：**同一时刻只有一个选中项**——单击目录选中它（决定「+」新建的落点，顶部菜单会显示「在「X」下新建」），单击文档则选中并打开该文档，之前的目录选中自动清除；展开 / 折叠走左侧箭头；双击重命名。
+- 交互：**同一时刻只有一个选中项**——单击目录选中它（决定「+」新建的落点，顶部菜单会显示「在「X」下新建」），单击文档则选中并打开该文档，之前的目录选中自动清除；点击空白处清除选中；展开 / 折叠走左侧箭头；双击重命名。
+- **新建即命名（v0.6）**：新建目录 / 文档后，名称输入框自动聚焦且为空（占位「未命名目录 / 未命名文档」），用户直接键入即可命名；不输入直接失焦则保留默认名称。新目录 / 文档固定插入同级最上方。
+- **拖拽排序（v0.6）**：拖拽目录或文档到另一行的上 / 下边缘调整同级顺序，拖到目录行中部则移入该目录；目录不能拖进自己或自己的子孙。拖拽位置以 `position` 分数坐标持久化。
 - 视觉：同级目录与文档的图标垂直对齐（目录的箭头占一列固定宽度，文档用同宽占位补上）。
 - 展开 / 折叠按目录记忆（`tree-todo.sidebarCollapsed`），新建子项时自动展开父目录。
 - 右键菜单：
   - 目录：新建文档 / 新建子目录 / 导出 / 导入到此目录 / 移动到… / 重命名 / 删除目录；
-  - 文档：导出 / 移动到… / 重命名 / 删除文档。
+  - 文档：导出 / 移动到… / 重命名 / 删除文档；
+  - 空白处：新建文档 / 新建目录（落在根层级）。
 - 「移动到…」二级菜单列出所有目录 + 根目录；目录不能移进自己或自己的子孙（`CyclicMove`）。
 - 删除目录：**整个目录（含子目录与其中文档）作为一个条目进入回收站**，恢复时目录结构与文档归属原样还原；若会删空全部文档则拒绝。
+- **回收站自动清理（v0.6）**：设置页可配置保留天数（默认 30 天，0 = 不自动清理），启动与运行期间自动清理过期条目。
 - 宽度可拖拽（180–420px），松手即写入 `tree-todo.sidebarWidth`，重启后保持。
 
 ## 7. 导入 / 导出入口（v0.5）
@@ -154,7 +158,7 @@
 
 ## 8. IPC 数据流约定（决策 D6）
 
-- command 清单（v0.5）：`get_tree`、`create_node`、`update_content`、`update_note`、`toggle_status`、`delete_node`、`move_node`、`set_collapsed`、`expand_nodes`、`collapse_all`、`undo`、`redo`；文档 / 目录：`list_documents`、`create_document`、`rename_document`、`delete_document`、`create_folder`、`rename_folder`、`delete_folder`、`switch_document`、`get_current_document`；导入导出：`export_document`、`export_folder`、`export_all`、`import_bundle`。
+- command 清单（v0.5）：`get_tree`、`create_node`、`update_content`、`update_note`、`toggle_status`、`delete_node`、`move_node`、`set_collapsed`、`expand_nodes`、`collapse_all`、`undo`、`redo`；文档 / 目录：`list_documents`、`create_document`、`rename_document`、`delete_document`、`create_folder`、`rename_folder`、`delete_folder`、`switch_document`、`get_current_document`；导入导出：`export_document`、`export_folder`、`export_all`、`import_bundle`。v0.6 起 `move_document` / `move_folder` 增加 `position` 参数用于侧边栏排序，并新增 `get_settings` / `set_trash_retention_days`。
 - `create_node` 额外返回 `newId`（前端创建后立即选中并进入编辑态）。
 - 每个**变更类** command 返回**受影响子树的最新快照**（操作节点 + 级联子孙 + 被传播修改的祖先链），前端 store 合并后受控刷新。
 - **撤销约定（v0.2）**：除视图类命令（`set_collapsed` / `expand_nodes` / `collapse_all`）外，所有变更类命令必须记录历史（快照式 before/after，上限 100 步）；`undo` / `redo` 返回可直接合并的 patch（无历史时为 `null`）。节点删除也已改为物理删除，撤销通过历史快照恢复。

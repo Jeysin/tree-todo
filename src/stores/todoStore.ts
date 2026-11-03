@@ -132,8 +132,8 @@ interface TodoState {
   deleteDocument: (id: string) => Promise<void>;
   createFolder: (name: string, parentId: string | null) => Promise<FolderMeta | null>;
   renameFolder: (id: string, name: string) => Promise<void>;
-  moveDocument: (id: string, folderId: string | null) => Promise<void>;
-  moveFolder: (id: string, parentId: string | null) => Promise<void>;
+  moveDocument: (id: string, folderId: string | null, position?: number | null) => Promise<void>;
+  moveFolder: (id: string, parentId: string | null, position?: number | null) => Promise<void>;
   deleteFolder: (id: string) => Promise<void>;
   // 回收站
   loadTrash: () => Promise<void>;
@@ -451,9 +451,9 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
   },
 
-  async moveDocument(id, folderId) {
+  async moveDocument(id, folderId, position = null) {
     try {
-      await ipc.moveDocument(id, folderId);
+      await ipc.moveDocument(id, folderId, position);
       await get().loadDocuments();
       get().showToast('已移动文档');
     } catch (e) {
@@ -462,9 +462,9 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
   },
 
-  async moveFolder(id, parentId) {
+  async moveFolder(id, parentId, position = null) {
     try {
-      await ipc.moveFolder(id, parentId);
+      await ipc.moveFolder(id, parentId, position);
       await get().loadDocuments();
       get().showToast('已移动目录');
     } catch (e) {

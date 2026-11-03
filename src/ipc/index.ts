@@ -2,10 +2,12 @@
  * Tauri command 的唯一前端出口（AGENTS.md：组件内禁止裸调 invoke）。
  * 命令参数使用 camelCase，由 Tauri 2 自动映射 Rust 侧 snake_case。
  */
+import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 
 import type {
   Affected,
+  AppSettings,
   CopyResult,
   CreateResult,
   DocIndex,
@@ -92,12 +94,25 @@ export const ipc = {
     invoke('create_folder', { name, parentId }),
   renameFolder: (id: string, name: string): Promise<FolderMeta> =>
     invoke('rename_folder', { id, name }),
-  /** 把文档移动到目录（folderId = null 表示根层级）。 */
-  moveDocument: (id: string, folderId: string | null): Promise<DocMeta> =>
-    invoke('move_document', { id, folderId }),
-  /** 把目录移动到另一个目录（parentId = null 表示根层级）；禁止移进自身子树。 */
-  moveFolder: (id: string, parentId: string | null): Promise<FolderMeta> =>
-    invoke('move_folder', { id, parentId }),
+  /** 把文档移动到目录并指定同级位置（folderId = null 表示根层级；position = null 表示置顶）。 */
+  moveDocument: (
+    id: string,
+    folderId: string | null,
+    position: number | null = null,
+  ): Promise<DocMeta> => invoke('move_document', { id, folderId, position }),
+  /** 把目录移动到另一个目录并指定同级位置（parentId = null 表示根层级；禁止移进自身子树）。 */
+  moveFolder: (
+    id: string,
+    parentId: string | null,
+    position: number | null = null,
+  ): Promise<FolderMeta> => invoke('move_folder', { id, parentId, position }),
+  /** 应用设置（回收站保留天数等）。 */
+  getSettings: (): Promise<AppSettings> => invoke('get_settings'),
+  /** 修改回收站保留天数（0 = 不自动清理），并立即清理过期条目。 */
+  setTrashRetentionDays: (days: number): Promise<AppSettings> =>
+    invoke('set_trash_retention_days', { days }),
+  /** 应用版本号（用于左上角展示）。 */
+  getAppVersion: (): Promise<string> => getVersion(),
   deleteFolder: (id: string): Promise<DocIndex> => invoke('delete_folder', { id }),
   switchDocument: (id: string): Promise<void> => invoke('switch_document', { id }),
   getCurrentDocument: (): Promise<DocMeta> => invoke('get_current_document'),

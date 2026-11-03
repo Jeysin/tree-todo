@@ -158,6 +158,8 @@ export interface DocMeta {
   /** 所属目录 id；null 表示位于根层级。 */
   folderId: string | null;
   createdAt: string;
+  /** 侧边栏同级排序（v0.6：与目录共享坐标）。 */
+  position: number;
 }
 
 /** 目录元数据（v0.5）：可嵌套，只存在于 documents.json 索引里。 */
@@ -166,6 +168,14 @@ export interface FolderMeta {
   name: string;
   parentId: string | null;
   createdAt: string;
+  /** 侧边栏同级排序（v0.6：与文档共享坐标）。 */
+  position: number;
+}
+
+/** 应用设置（v0.6：设置页读写）。 */
+export interface AppSettings {
+  /** 回收站自动清理阈值（天）；0 表示不自动清理。 */
+  trashRetentionDays: number;
 }
 
 /** 文档索引（documents.json）。 */
