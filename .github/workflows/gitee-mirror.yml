@@ -1,0 +1,70 @@
+name: Mirror release to Gitee
+
+# 手动把某个已发布的 GitHub Release 产物搬到 Gitee Release（docs/09-gitee-release.md）。
+# 用途：补传历史版本、release 发完才配好 GITEE_TOKEN、或需要在 Gitee 侧重传附件。
+# 只做「下载 → 建/更新 release → 传附件」，不重新构建。
+#
+# 注意：Gitee 的「最新版」按 release 创建时间判定，补传历史版本请按版本号升序执行，
+# 否则老版本会抢占「最新版」标记。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要镜像的 tag（如 v2.0.0）'
+        required: true
+        type: string
+      overwrite:
+        description: '同名附件已存在时删除 release 重建并全量重传'
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: '在 Gitee 上标记为预发布'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: gitee-mirror-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Mirror ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Require GITEE_TOKEN
+        if: env.GITEE_TOKEN == ''
+        run: |
+          echo "::error::缺少仓库密钥 GITEE_TOKEN，无法上传到 Gitee（见 docs/09-gitee-release.md §3）"
+          exit 1
+
+      - name: Mirror assets
+        run: |
+          set -euo pipefail
+          args=(--tag "$TAG")
+          [ "$OVERWRITE" = "true" ] && args+=(--overwrite)
+          [ "$PRERELEASE" = "true" ] && args+=(--prerelease)
+          node scripts/gitee-release.mjs "${args[@]}"
+        env:
+          TAG: ${{ inputs.tag }}
+          OVERWRITE: ${{ inputs.overwrite }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          GITEE_REPO: Jeysin/tree-todo
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

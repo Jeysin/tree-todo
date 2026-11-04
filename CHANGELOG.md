@@ -3,6 +3,17 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **Gitee 发布渠道**：打 tag 后自动把 GitHub Release 的安装包镜像到 Gitee Release（`publish-gitee` job），也可用 `Mirror release to Gitee` 手动补传。两端产物同源、同一套 Ed25519 签名。用法与限制见 `docs/09-gitee-release.md`。
+- 新增 `pnpm release:gitee --tag vX.Y.Z`：本地一条命令完成「下载 GitHub 产物 → 建 Gitee Release → 传附件」，幂等可重跑。
+
+### 说明
+
+- Gitee Go 无 macOS 构建机（额度 200 分钟/仓库/月），安装包继续由 GitHub Actions 构建，Gitee 只承担分发。
+
 ## [2.0.0] — 2026-11-03
 
 「AI Agent 协同」成为主线能力：任务在树上拆，执行交给 Agent，验收权留在人手里。

@@ -81,6 +81,7 @@ docs/           # 技术文档
 | 架构 / 选型 | `docs/01-overview.md` |
 | 新功能 / 交互变更 | `docs/03-feature-design.md`、`docs/04-ui-ux-design.md` |
 | 里程碑调整 | `docs/05-roadmap.md` |
+| 发布渠道 / CI 流水线 | `docs/09-gitee-release.md` |
 
 文档与代码不一致时，以文档描述的领域规则为准，改代码；文档本身错了才改文档（并在 PR 中说明理由）。
 
