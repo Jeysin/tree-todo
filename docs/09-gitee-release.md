@@ -62,6 +62,20 @@ git tag v2.1.0 && git push origin v2.1.0
 | `*.sig` | 更新包签名（Ed25519） | ✅ |
 | `latest.json` | 更新清单 | ✅（其中 URL 仍指向 GitHub，见 §6） |
 
+### 2.1 执行时机（为什么不会抢跑）
+
+`publish-gitee` 声明了 `needs: [build, publish-manifest]`，GitHub Actions 的语义保证：
+
+| 机制 | 效果 |
+|---|---|
+| `needs: build`（matrix job） | 等 macOS + Windows **所有矩阵腿**全部成功才继续 |
+| `tauri-action` 在 `build` 内部完成上传 | `build` 变绿 ⇒ `.dmg` / `-setup.exe` / `.app.tar.gz` / `*.sig` 已经在 Release 里 |
+| `needs: publish-manifest` | 该 job 最后一步才上传 `latest.json`，等它 ⇒ 清单也已就位 |
+| 上游任一 job 失败 | `publish-gitee` 直接 skipped（默认 `needs` 语义），不会传半套产物 |
+
+即便如此，“等到了”不等于“凑齐了”（例如签名密钥没配导致 `.sig` 缺失），所以 CI 里调用时带
+`--require-complete`：6 类产物缺任何一类就失败，且**在创建 release 之前**就失败，不会在 Gitee 上留残缺版本。
+
 ---
 
 ## 3. 一次性配置
@@ -117,6 +131,7 @@ pnpm release:gitee --tag v2.0.0                  # 从 GitHub 下载后上传
 pnpm release:gitee --tag v2.0.0 --dry-run        # 只打印计划
 pnpm release:gitee --tag v2.0.0 --assets-dir ./release-assets   # 用本地已有产物
 pnpm release:gitee --tag v2.0.0 --overwrite      # 删 release 重建后全量重传
+pnpm release:gitee --tag v2.0.0 --require-complete   # 先校验 6 类产物齐全再传
 ```
 
 退出码：`0` 成功，`1` 接口/参数错误，`2` 缺 `GITEE_TOKEN`。

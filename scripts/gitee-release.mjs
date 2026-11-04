@@ -17,6 +17,8 @@
  *   --tag <vX.Y.Z>       必填（也可用 TAG / GITHUB_REF_NAME）
  *   --assets-dir <dir>   用本地已有产物，跳过从 GitHub 下载
  *   --overwrite          同名附件已存在时删除 release 后重建并全量重传
+ *   --require-complete   校验 6 类产物齐全（dmg / app.tar.gz + 两个 sig / exe / latest.json），
+ *                        缺任何一类直接失败；release.yml 自动镜像时会带上
  *   --prerelease         在 Gitee 上标记为预发布
  *   --dry-run            只打印计划，不发写请求
  *   --repo <owner/repo>  Gitee 仓库，默认 GITEE_REPO 或 Jeysin/tree-todo
@@ -42,6 +44,20 @@ const UPLOAD_ATTEMPTS = 5;
 /** 需要镜像的产物：安装包本体、更新包、签名、更新清单。 */
 const ASSET_PATTERNS = [/\.dmg$/i, /-setup\.exe$/i, /\.app\.tar\.gz$/i, /\.sig$/i, /^latest\.json$/i];
 
+/**
+ * 一次完整发布必须凑齐的产物组。用 --require-complete 开启：
+ * 上游打包慢且容易半途出错（少了签名、latest.json 没生成），
+ * 与其把残缺的一组传到 Gitee，不如直接失败让人看见。
+ */
+const REQUIRED_GROUPS = [
+  { label: 'macOS 安装包 (.dmg)', match: /\.dmg$/i },
+  { label: 'macOS 更新包 (.app.tar.gz)', match: /\.app\.tar\.gz$/i },
+  { label: 'macOS 更新包签名 (.app.tar.gz.sig)', match: /\.app\.tar\.gz\.sig$/i },
+  { label: 'Windows 安装包 (-setup.exe)', match: /-setup\.exe$/i },
+  { label: 'Windows 安装包签名 (-setup.exe.sig)', match: /-setup\.exe\.sig$/i },
+  { label: '更新清单 (latest.json)', match: /^latest\.json$/i },
+];
+
 const args = parseArgs(process.argv.slice(2));
 const tag = args.tag || process.env.TAG || process.env.GITHUB_REF_NAME;
 const giteeRepo = args.repo || process.env.GITEE_REPO || 'Jeysin/tree-todo';
@@ -52,6 +68,7 @@ const ghToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
 const dryRun = args.flags.has('dry-run');
 const overwrite = args.flags.has('overwrite');
 const prerelease = args.flags.has('prerelease');
+const requireComplete = args.flags.has('require-complete');
 const releaseUrl = `https://gitee.com/${giteeRepo}/releases/tag/${tag}`;
 
 function parseArgs(argv) {
@@ -311,6 +328,17 @@ async function main() {
   const tempDir = args['assets-dir'] ? null : mkdtempSync(join(tmpdir(), 'tree-todo-gitee-'));
   try {
     const files = args['assets-dir'] ? collectLocalAssets(args['assets-dir']) : await downloadAll(tempDir);
+
+    if (requireComplete) {
+      const missing = REQUIRED_GROUPS.filter(group => !files.some(file => group.match.test(file.name)));
+      if (missing.length > 0) {
+        fail(
+          `产物不完整（--require-complete）：缺 ${missing.map(group => group.label).join('、')}\n` +
+            `  实际拿到：${files.map(file => file.name).join(', ') || '（无）'}`,
+        );
+      }
+      log(`产物齐全校验通过：${REQUIRED_GROUPS.length} 类产物全部就位`);
+    }
 
     for (const file of files.filter(item => item.size > GITEE_MAX_ASSET_BYTES)) {
       log(`跳过 ${file.name}：${humanSize(file.size)} 超过 Gitee 单附件 100MB 上限`);

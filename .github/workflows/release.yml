@@ -154,7 +154,7 @@ jobs:
 
       - name: Mirror release assets to Gitee
         if: env.GITEE_TOKEN != ''
-        run: node scripts/gitee-release.mjs --tag "$TAG"
+        run: node scripts/gitee-release.mjs --tag "$TAG" --require-complete
         env:
           TAG: ${{ github.ref_name }}
           GITEE_REPO: Jeysin/tree-todo
