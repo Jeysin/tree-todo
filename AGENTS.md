@@ -82,6 +82,7 @@ docs/           # 技术文档
 | 新功能 / 交互变更 | `docs/03-feature-design.md`、`docs/04-ui-ux-design.md` |
 | 里程碑调整 | `docs/05-roadmap.md` |
 | 发布渠道 / CI 流水线 | `docs/09-gitee-release.md` |
+| 修改 README 内容 | `README.md`（英文，仓库默认展示）与 `README.zh-CN.md`（中文）必须同步修改：章节结构、截图、链接及顶部 / 底部语言切换条保持一致 |
 
 文档与代码不一致时，以文档描述的领域规则为准，改代码；文档本身错了才改文档（并在 PR 中说明理由）。
 

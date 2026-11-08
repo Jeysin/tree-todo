@@ -1,13 +1,17 @@
+<div align="right">
+  <b>English</b> &nbsp;|&nbsp; <a href="./README.zh-CN.md">简体中文</a>
+</div>
+
 <div align="center">
   <img src="assets/icon-1024.png" width="88" alt="Tree Todo" />
 
   <h1>Tree Todo</h1>
 
-  <p><b>把待办写成树，让进度自己往上长。</b></p>
+  <p><b>Structure your to-dos as a tree. Let progress propagate on its own.</b></p>
 
   <p>
-    无限层级拆解 · 状态自动传播 · 树形 / 平铺双视图 · <b>AI Agent 协同</b> · 本地优先<br />
-    Windows / macOS 桌面应用（Tauri 2 + Rust + React）
+    Unlimited nesting · Automatic status propagation · Tree &amp; flat views · <b>AI Agent collaboration</b> · Local-first<br />
+    A Windows / macOS desktop app (Tauri 2 + Rust + React)
   </p>
 
   <p>
@@ -20,158 +24,158 @@
 
 <br />
 
-![树形视图：一棵待办树，已完成的支线自动变灰](assets/screenshots/tree.png)
+![Tree view: a to-do tree where completed branches are automatically greyed out](assets/screenshots/tree.png)
 
-> 截图中的任务树为演示数据。
+> The task tree in the screenshots is demo data.
 
 ---
 
-## 它解决什么问题
+## The problem
 
-你的待办清单大概率长这样：40 条任务平铺在一个列表里。
-「改版首页」和「给客户回邮件」并排躺着，看不出谁属于哪个目标，也算不出一条任务线到底还剩多少活。
+Your to-do list probably looks like this: 40 tasks flattened into a single list.
+"Redesign the homepage" sits next to "Reply to the client's email" — you can't tell which goal each belongs to, or how much work a given thread still has left.
 
-于是你换成脑图：结构终于清楚了，但节点没有状态。
-做完一个子任务，要自己回去把父节点也勾掉；新增一条子任务，又忘了把父节点改回未完成。**结构工具和状态工具，是两套东西。**
+So you switch to a mind map: now the structure is clear, but nodes have no state.
+Finish a subtask and you have to go back and tick off its parent too; add a new subtask and you forget to set the parent back to pending. **Structure tools and status tools are two different things.**
 
-Tree Todo 把这两件事合成一个动作：
+Tree Todo merges them into a single action:
 
-> **结构用树表达，进度用传播维护。**
+> **Express structure as a tree; maintain progress by propagation.**
 
-| 你现在的做法 | 卡在哪 |
+| What you use today | Where it breaks down |
 | --- | --- |
-| 平铺待办清单 | 层级只能靠缩进假装，几十条之后看不出从属关系，也回答不了「这条线还差多少」 |
-| 专业脑图工具 | 结构清楚，但节点没有 pending / done，父节点进度全靠手动同步，迟早对不上 |
-| 项目管理 SaaS | 重、要联网、要账号；一个人的任务不值得为它开一套系统 |
+| Flat to-do lists | Hierarchy is faked with indentation; past a few dozen items you can't see what belongs to what, or answer "how much is left on this thread?" |
+| Mind-mapping tools | Great structure, but no pending / done on nodes — parent progress is synced by hand and inevitably drifts |
+| Project-management SaaS | Heavy, online, account required; one person's tasks don't justify a whole system |
 
-使用树形待办，解决你所有的卡点，并且基于「待办即Prompt」的设计理念，树上的任务可以直接交给 AI Agent 去执行，执行状态会通过MCP回调的方式同步回Tree Todo中，哪个节点正在执行、哪个节点待验收，一目了然。
+Tree Todo clears all of these hurdles. It's also built on the idea that **a to-do is a prompt**: any task on the tree can be handed straight to an AI Agent, and execution state is written back to Tree Todo through MCP callbacks — which node is running and which awaits your review are visible at a glance.
 
-## 核心功能
+## Features
 
-### 1. 树形视图：任务拆到哪一层都不乱
+### 1. Tree view: nest as deep as you need
 
-- 水平脑图布局，根在左、子任务向右生长，一眼看清目标与子任务的从属关系
-- 任意节点可以继续拆子节点，层级不设上限；节点文字自动折行，不截断
-- 触控板双指平移 / 捏合缩放（10%–400%），`Shift+1` 一键适应整棵树
-- 折叠角标收拢支线，`Ctrl+1` 与平铺视图来回切
+- Horizontal mind-map layout: root on the left, children growing rightward, so goals and subtasks are obvious at a glance
+- Any node can be split further, with no depth limit; long text wraps instead of being truncated
+- Trackpad two-finger pan / pinch zoom (10%–400%), `Shift+1` fits the whole tree
+- Collapse badges tuck away a branch; `Ctrl+1` toggles to the flat view and back
 
-### 2. 状态自动传播：你只需要勾叶子
+### 2. Automatic status propagation: just tick the leaves
 
-这是整个产品的核心。规则只有四条：
+This is the heart of the product. There are only four rules:
 
-| 你的操作 | 会发生什么 |
+| What you do | What happens |
 | --- | --- |
-| 勾掉一个父任务 | 整条支线一起完成（级联向下） |
-| 子任务全部完成 | 父任务自动完成，并一路向上传播 |
-| 在已完成的任务下新增子任务 | 该任务自动退回「待处理」 |
-| 取消任意一个子任务 | 所有祖先链重新变回「待处理」 |
+| Tick off a parent task | The whole branch completes with it (cascading down) |
+| All subtasks complete | The parent completes automatically, and it propagates all the way up |
+| Add a subtask under a completed task | That task reverts to "Pending" |
+| Uncheck any subtask | Every ancestor in its chain returns to "Pending" |
 
-所以你永远不需要回答「父任务该不该勾」——树的形状本身就是进度的真相。
-已完成节点会划线、降透明度，整条连线变灰，一眼看出「这条支线走完了」。
+So you never have to decide "should the parent be ticked?" — the shape of the tree **is** the truth about progress.
+Completed nodes get a strikethrough and reduced opacity, and the whole connecting line turns grey, so a finished branch stands out immediately.
 
-> 实现上，传播只在 Rust 侧发生，且与数据写入在同一个事务里；前端只持有渲染快照。
-> 这保证了快速连点、连续新建时状态不会错乱，也不会出现「界面勾了、库里没写」。
+> Under the hood, propagation happens only on the Rust side, in the same transaction as the write; the frontend holds nothing but a render snapshot.
+> That's why rapid clicking and consecutive node creation can't leave state inconsistent, and you never get "ticked in the UI, not written to the database".
 
-### 3. 平铺视图：只看「还有哪些活」
+### 3. Flat view: only what's still left to do
 
-![平铺视图：左「待处理」右「已完成」，每条带完整路径](assets/screenshots/flat.png)
+![Flat view: pending on the left, done on the right, each with its full path](assets/screenshots/flat.png)
 
-- 只列**叶子任务**（可直接执行的原子事项），中间的容器节点不重复出现
-- 左栏待处理按树的深度优先顺序排列，同一任务线的叶子挨在一起；右栏已完成按完成时间倒序
-- 每条都带面包屑路径（`Tree Todo v2.0 发布 / 发布准备 / macOS 公证与签名`），点一下跳回树里定位并高亮
-- 已完成条目显示「今天 / 昨天 / 10月31日」，待验收的条目单独计数
+- Lists **leaf tasks only** (the atomic, directly actionable items); container nodes aren't repeated
+- Pending items on the left follow the tree's depth-first order, so leaves of the same thread stay together; completed items on the right are sorted by completion time, newest first
+- Every row carries a breadcrumb path (`Tree Todo v2.0 release / Release prep / macOS notarization & signing`); click one to jump back into the tree, locate and highlight the node
+- Completed rows show "Today / Yesterday / Oct 31", and items awaiting review get their own counter
 
-### 4. AI Agent 协同：待办即Prompt，一键复制给Agent执行，验收权留给你
+### 4. AI Agent collaboration: a to-do is a prompt — copy it to an Agent, keep the sign-off
 
-![AI Agent 协同：指派 → 执行 → 验收](assets/screenshots/agent-flow.png)
+![AI Agent collaboration: dispatch → execute → review](assets/screenshots/agent-flow.png)
 
-- 右键「复制 Prompt（带回执）」，粘给 Trae / Claude Code / Codex / 任意支持 MCP 的 Agent
-- Agent 开工前调 `tree_todo_start`，节点自动亮起「执行中 · 计时」；收工调 `tree_todo_complete_tasks`，节点变「待验收」
-- **MCP 工具集里没有任何「勾选」能力**——Agent 最多把任务推到待验收，done 只能由你点
-- 多选整段复制、同一批节点重复复制复用同一个 run、24 小时没开工的派发自动过期
-- 本机服务（`127.0.0.1:39401`）+ 持久 token，配置一次长期有效
+- Right-click → "Copy Prompt (with receipt)", paste it into Trae / Claude Code / Codex / any MCP-capable Agent
+- Before starting, the Agent calls `tree_todo_start` and the node lights up as "Running · timer"; when done it calls `tree_todo_complete_tasks` and the node becomes "Awaiting review"
+- **There is no "tick a task as done" tool in the MCP toolset** — an Agent can only push a task to "Awaiting review"; only you can mark it done
+- Multi-select to copy a whole batch; re-copying the same nodes reuses the same run; dispatches not started within 24 hours expire automatically
+- Local service (`127.0.0.1:39401`) + persistent token — configure once, it keeps working
 
-![节点执行徽标：Trae 正在执行，WorkBuddy 交回两个待验收任务](assets/screenshots/agent-badge.png)
+![Execution badges: Trae is running, WorkBuddy handed back two tasks awaiting review](assets/screenshots/agent-badge.png)
 
-顶栏的「执行中 / 待验收」计数就是入口。点开就是这一轮的运行抽屉：Agent、总耗时、逐节点回执与 Prompt 快照都在里面，验收也在这里完成。
+The "Running / Awaiting review" counters in the top bar are the entry point. Open them and you get the run drawer for that round: the Agent, total elapsed time, per-node receipts and the prompt snapshot — review happens here too.
 
-![运行抽屉：Agent、总耗时、逐节点回执与 Prompt 快照](assets/screenshots/agent-run-drawer.png)
+![Run drawer: Agent, elapsed time, per-node receipts and prompt snapshot](assets/screenshots/agent-run-drawer.png)
 
-完整接入步骤见 [用 AI Agent 干活：三步接入](#用-ai-agent-干活三步接入)。
+See [Working with AI Agents: 3-Step Setup](#working-with-ai-agents-3-step-setup) for the full setup.
 
-> 截图中的任务树、Agent 名称与回执均为演示数据。
+> The task trees, Agent names and receipts in the screenshots are demo data.
 
-### 5. 多文档 + 目录：多条任务线互不打扰
+### 5. Multiple documents + folders: keep threads separate
 
-![侧边栏：目录可嵌套，右键管理文档与目录](assets/screenshots/sidebar.png)
+![Sidebar: nestable folders, right-click to manage documents and folders](assets/screenshots/sidebar.png)
 
-- 每个文档是一棵独立的树，对应磁盘上一个独立的 SQLite 文件
-- 目录可无限嵌套，右键即可新建文档 / 子目录、导出、移动到、重命名、删除
-- 拖拽调整同级顺序、拖进目录，或把条目拖到列表空白处移回根层级；悬停在折叠的目录上会先自动展开，防环由 Rust 侧二次校验
-- 侧边栏宽度可拖拽，目录展开状态按目录记忆
+- Each document is an independent tree backed by its own SQLite file on disk
+- Folders nest without limit; right-click to create a document / subfolder, export, move to, rename, or delete
+- Drag to reorder siblings, drop into a folder, or drop onto empty space to move back to root level; hovering over a collapsed folder expands it first, and cycle prevention is double-checked in Rust
+- Sidebar width is draggable; folder expansion state is remembered per folder
 
-### 6. 键盘流：全程不用碰鼠标
+### 6. Keyboard-first: never touch the mouse
 
-![快捷键面板](assets/screenshots/shortcuts.png)
+![Shortcuts panel](assets/screenshots/shortcuts.png)
 
-`N` 新建 → 输入 → `Tab` 拆子任务 → 输入 → `Enter` 加同级 → `S` 勾完成。
-一条任务线可以在十几秒内建完，手不用离开键盘。`⌘F` 搜索、`⌘Z` 撤销、`⌘1/2/3` 切视图都在指尖；
-派活给 Agent 也只差一次 `⌘⇧R`。
+`N` new → type → `Tab` split a subtask → type → `Enter` add a sibling → `S` mark done.
+A whole thread can be built in seconds without leaving the keyboard. `⌘F` search, `⌘Z` undo, `⌘1/2/3` switch views — all at your fingertips;
+dispatching to an Agent is only `⌘⇧R` away.
 
-### 7. 搜索与定位
+### 7. Search and jump
 
-![搜索浮层：匹配内容与备注，回车直接跳到树里](assets/screenshots/search.png)
+![Search overlay: matches content and notes, Enter jumps straight into the tree](assets/screenshots/search.png)
 
-`⌘F` 打开搜索浮层，同时匹配任务内容与备注，↑↓ 选择、`Enter` 跳转——自动展开祖先路径、滚入视口并高亮。
+`⌘F` opens the search overlay, matching both task content and notes; `↑↓` to select, `Enter` to jump — ancestors expand automatically, the node scrolls into view and is highlighted.
 
-### 8. 统计：这条线到底走了多远
+### 8. Stats: how far along is this thread
 
-![统计视图：叶子完成率与最近 7 天完成量](assets/screenshots/stats.png)
+![Stats view: leaf completion rate and completions over the last 7 days](assets/screenshots/stats.png)
 
-按任务线统计叶子总数、待处理 / 已完成、完成率和最近 7 天完成量。看的是「可执行事项」的真实进度，而不是被容器节点稀释过的百分比。
+Per-thread totals of leaf tasks, pending / done, completion rate, and completions over the last 7 days. It measures real progress on **actionable items**, not a percentage diluted by container nodes.
 
-### 9. 隐藏已完成：只看还欠着的
+### 9. Hide done: see only what you still owe
 
-![隐藏已完成：整棵已完成的子树从画布上消失](assets/screenshots/hide-done.png)
+![Hide done: entire completed subtrees disappear from the canvas](assets/screenshots/hide-done.png)
 
-顶栏的小眼睛按钮，一键收起所有已完成节点及其子树（根任务始终保留），并**按文档各自记忆**开关状态。任务很多时，这是最快的「聚焦」手段。
+The little eye button in the top bar collapses all completed nodes and their subtrees in one click (the root task always stays), and the switch is **remembered per document**. With a large tree, it's the fastest way to focus.
 
-### 10. 回收站与撤销：删错了能回来
+### 10. Trash and undo: deleting is reversible
 
-![回收站：文档与整个目录都可以整体恢复](assets/screenshots/trash.png)
+![Trash: whole documents and folders can be restored](assets/screenshots/trash.png)
 
-- 删除的文档 / 整个目录进入回收站，可恢复、彻底删除或清空；目录恢复时结构与文档归属原样还原
-- 回收站支持按天自动清理（默认 30 天，0 = 关闭），设置页可改；待验收的记录不会被清掉
-- 节点删除是即时物理删除，但 `⌘Z` 立刻回来——所有变更类操作都有历史记录（100 步）
-- 拖拽改父子关系、`Alt+↑/↓` 调同级顺序，防环由 Rust 侧二次校验
+- Deleted documents / entire folders go to the Trash, where they can be restored, permanently deleted, or emptied; restoring a folder reinstates its structure and document associations exactly
+- Trash can auto-clean by age (30 days by default, `0` = off), configurable in Settings; records awaiting review are never purged
+- Node deletion is immediate and physical, but `⌘Z` brings it right back — every mutating action is recorded in history (100 steps)
+- Drag to change parent/child relationships, `Alt+↑/↓` to reorder siblings; cycle prevention is double-checked in Rust
 
-### 11. 明暗主题
+### 11. Light and dark themes
 
-![深色主题](assets/screenshots/dark.png)
+![Dark theme](assets/screenshots/dark.png)
 
-跟随系统 / 浅色 / 深色，随时切换。
+Follow system / Light / Dark — switch at any time.
 
-### 12. 数据就在你自己的硬盘上
+### 12. Your data lives on your own disk
 
-- 每个文档一个 SQLite 文件，**每次操作即事务写入**，没有「保存」按钮，关掉就完事
-- 无账号、无联网、无遥测；复制数据目录即完整备份
-- 支持把「当前文档 / 某个目录 / 全部」导出成一个 `.json` 文件，导入即整体还原（适合换机与归档）
+- One SQLite file per document, **written transactionally on every action** — there is no "Save" button, just close the app
+- No account, no network, no telemetry; copy the data directory for a complete backup
+- Export "current document / a folder / everything" into a single `.json` file; importing restores it wholesale (handy for switching machines or archiving)
 
-### 13. 自动更新：新版本不用自己找
+### 13. Auto-update: new versions find you
 
-- 启动时自动检查 GitHub Releases；有新版本弹窗展示版本号与更新说明
-- 也可以点左上角版本号，或系统菜单「检查更新…」手动检查；没有新版本会提示「已是最新版本」
-- Windows 可直接在应用内下载安装并重启；macOS 会打开 Releases 下载页（暂未签名公证）
-- 更新只替换程序，文档、目录、回收站与执行记录都不动
+- Checks GitHub Releases on startup; a dialog shows the version number and release notes when an update is available
+- You can also click the version number in the top-left corner, or use the system menu "Check for Updates…"; if there's nothing new it says "You're up to date"
+- Windows downloads, installs and restarts in-app; macOS opens the Releases download page (not yet signed / notarized)
+- Updates only replace the binary — documents, folders, Trash and run records are untouched
 
-## 用 AI Agent 干活：三步接入
+## Working with AI Agents: 3-Step Setup
 
-> 适用于任何支持 MCP 的 Agent（Trae、Claude Code、Codex、Cursor…）。
-> 不支持 MCP 也能用——右键「复制 Prompt」拿纯文本变体，只是少了「执行中 / 待验收」这两盏灯。
+> Works with any MCP-capable Agent (Trae, Claude Code, Codex, Cursor…).
+> No MCP? Still usable — right-click "Copy Prompt" for a plain-text variant; you just lose the "Running / Awaiting review" lights.
 
-### ① 配好 MCP（一次就够）
+### 1. Configure MCP (once)
 
-设置（侧边栏底部的齿轮）→ **MCP 集成** → 选目标 Agent → **复制 MCP 配置**，粘进 Agent 的 MCP 设置：
+Settings (the gear at the bottom of the sidebar) → **MCP Integration** → pick your Agent → **Copy MCP config**, then paste it into the Agent's MCP settings:
 
 ```json
 {
@@ -179,7 +183,7 @@ Tree Todo 把这两件事合成一个动作：
     "tree-todo": {
       "url": "http://127.0.0.1:39401/mcp",
       "headers": {
-        "Authorization": "Bearer <设置页里那串 token>",
+        "Authorization": "Bearer <the token shown in Settings>",
         "X-Tree-Todo-Agent": "Trae"
       }
     }
@@ -187,231 +191,235 @@ Tree Todo 把这两件事合成一个动作：
 }
 ```
 
-- 服务只监听本机回环地址，token 持久化在数据目录的 `mcp.json` 里，重启后配置依然有效
-- 端口被占用时会自动 +1 并提示重新复制；点「重置 token」会让旧配置立刻失效
-- `X-Tree-Todo-Agent` 决定节点徽标上显示谁在执行（Trae / Claude Code / Codex…）
+- The service listens on loopback only; the token is persisted in `mcp.json` in the data directory, so the config survives restarts
+- If the port is taken it increments by 1 and asks you to re-copy the config; "Reset token" immediately invalidates the old one
+- `X-Tree-Todo-Agent` decides whose name shows on the node badge (Trae / Claude Code / Codex…)
 
-### ② 复制 Prompt
+### 2. Copy the prompt
 
-在树里右键任务 →「复制 Prompt（带回执）」（`⌘⇧R` / `Ctrl+Shift+R`）。
+Right-click a task in the tree → "Copy Prompt (with receipt)" (`⌘⇧R` / `Ctrl+Shift+R`).
 
-多选后右键则**整段复制**：每个节点一段 `# 任务 N`，所有段落共用一个 runId；右键点在选区内时，动作作用于整个选区。
-父节点的 Prompt 只列**待处理**的子任务，已完成 / 正在执行 / 待验收的不会重复派给 Agent。
+With a multi-selection, right-click copies **the whole batch**: one `# Task N` section per node, all sharing a single runId; right-clicking inside the selection applies the action to the entire selection.
+A parent's prompt lists only **pending** subtasks — done, running and awaiting-review children aren't dispatched twice.
 
-Agent 收到的东西长这样（节选）：
+Here's an abridged example of what the Agent receives (translated from the app's Chinese prompt):
 
 ```text
-# 任务：重构导出流程，支持按目录导出
+# Task: Refactor the export flow to support exporting by folder
 
-节点 ID：`01JBQ7K3...`
+Node ID: `01JBQ7K3...`
 
-## 任务上下文
-- 文档：产品需求收集
-- 路径：Tree Todo v2.0 发布 / 发布准备
+## Task context
+- Document: Product requirements
+- Path: Tree Todo v2.0 release / Release prep
 
-## 子任务（全部完成后本任务才算完成）
-- [ ] 抽出打包函数
-- [ ] 补单元测试
-- [ ] 更新 docs/03
+## Subtasks (this task is complete only when all are done)
+- [ ] Extract the packaging function
+- [ ] Add unit tests
+- [ ] Update docs/03
 
-## 完成协议（必须遵守）
-运行 ID：`01JBQ7K3...`
+## Completion protocol (must follow)
+Run ID: `01JBQ7K3...`
 
-本次需要回执的节点：
-- `01JBQ7K3...` 重构导出流程，支持按目录导出
+Nodes requiring a receipt in this run:
+- `01JBQ7K3...` Refactor the export flow to support exporting by folder
 
-1. **开始执行前**，先调用 MCP 工具 `tree_todo_start`：
-   `{"run_id":"01JBQ7K3...","agent_name":"<你的产品名称，如 Claude Code / Trae>"}`
-   ——任务将标记为「执行中」并开始计时。
-2. **全部完成后**，调用 MCP 工具 `tree_todo_complete_tasks`：
-   `{"run_id":"01JBQ7K3...","tasks":[{"id":"01JBQ7K3...","result":"done","summary":"一句话说明"}]}`
-   ——任务将进入「待验收」，是否完成由用户验收决定。
-3. 若上述工具不可用（tree-todo 未运行或未配置其 MCP server），直接完成任务即可，无需回执。
-4. 任何时候都不要试图替用户「完成 / 勾选」任务。
+1. **Before you start**, call the MCP tool `tree_todo_start`:
+   `{"run_id":"01JBQ7K3...","agent_name":"<your product name, e.g. Claude Code / Trae>"}`
+   — the task will be marked "Running" and the timer starts.
+2. **When everything is done**, call the MCP tool `tree_todo_complete_tasks`:
+   `{"run_id":"01JBQ7K3...","tasks":[{"id":"01JBQ7K3...","result":"done","summary":"one-line explanation"}]}`
+   — the task moves to "Awaiting review"; whether it's actually done is up to the user.
+3. If those tools aren't available (Tree Todo isn't running or its MCP server isn't configured), just finish the task — no receipt needed.
+4. Never attempt to "complete / tick" a task on the user's behalf.
 ```
 
-Prompt 里的「约束」段可以在设置页改（每行一条），默认是这条链路上踩过坑之后总结出来的几条规矩。
+The "constraints" section of the prompt can be edited in Settings (one per line); the defaults are a few rules distilled from the pitfalls we hit on this path.
 
-### ③ 粘给 Agent，回树上验收
+### 3. Paste it to the Agent, then review back on the tree
 
-| 时机 | Agent 调用 | 节点变化 |
+| Moment | Agent calls | Node changes |
 | --- | --- | --- |
-| 开始动手 | `tree_todo_start` | 「执行中 · 1m20s」，秒表开始走 |
-| 全部做完 | `tree_todo_complete_tasks` | 「待验收 · Trae」，秒表停住 |
+| Starting work | `tree_todo_start` | "Running · 1m20s", stopwatch starts |
+| Everything done | `tree_todo_complete_tasks` | "Awaiting review · Trae", stopwatch stops |
 
-顶栏会出现「待验收 N」徽标，点开运行抽屉能看到这一轮的 Agent、总耗时、Prompt 快照，以及每个节点的回执与摘要。
+An "Awaiting review N" badge appears in the top bar; opening the run drawer shows the Agent for this round, total elapsed time, the prompt snapshot, and each node's receipt and summary.
 
-回到树上验收，两条路都行：
+Back on the tree, two ways to review — both are fine:
 
-- **通过** → 抽屉里点「全部通过」，或直接在树上勾掉节点（`S`）。两者走的是同一条传播事务：子任务全完成，父任务自动完成并一路向上
-- **驳回** → 写一句驳回原因（会写回节点备注），节点退回「待处理」，改完再复制一轮；旧回执作废，不会跟新一轮混在一起
-- **Agent 卡住了** → 执行中的计时不会自动停，看到「2h35m」就说明该介入了，抽屉里可以「标记结束」手动收口
+- **Accept** → click "Accept all" in the drawer, or just tick the node in the tree (`S`). Both go through the same propagation transaction: when all subtasks are done, the parent completes and it propagates upward
+- **Reject** → write a short reason (it's written back to the node's notes), the node returns to "Pending", then copy a fresh round after fixing it; the old receipt is voided and won't mix with the new round
+- **Agent stalled** → a running timer never stops on its own; seeing "2h35m" means it's time to step in. The drawer has "Mark as ended" to close it out manually
 
-| MCP 工具 | 谁调 | 作用 |
+| MCP tool | Called by | Effect |
 | --- | --- | --- |
-| `tree_todo_start` | Agent | 节点置「执行中」并开始计时 |
-| `tree_todo_complete_tasks` | Agent | 节点置「待验收」/「失败」并停表，附带一句话摘要 |
+| `tree_todo_start` | Agent | Marks a node "Running" and starts the timer |
+| `tree_todo_complete_tasks` | Agent | Marks a node "Awaiting review" / "Failed", stops the timer, attaches a one-line summary |
 
-> **验收权是物理隔离的**：MCP 工具集里没有任何写任务状态的能力，Agent 最多把任务推到「待验收」。
-> 这是代码层的红线，不是提示词里的君子协定——细节见 [`docs/06-agent-integration.md`](docs/06-agent-integration.md)。
+> **The sign-off is physically isolated**: no tool in the MCP toolset can write task state; an Agent can at most push a task to "Awaiting review".
+> That's a hard boundary in code, not a gentleman's agreement in a prompt — see [`docs/06-agent-integration.md`](docs/06-agent-integration.md) for details.
 
-### 为什么是「复制粘贴」而不是自动派发
+### Why copy-paste instead of automatic dispatch
 
-1.0 试过由宿主拉起 Agent CLI 子进程直接派活，三条路都堵：个人版 Agent 没有 CLI；有 CLI 的，执行目录与模型参数各家不同且随版本漂移；退出码甚至会骗人（认证失败仍返回 0）。
+1.0 tried having the host spawn an Agent CLI subprocess and dispatch work directly. All three paths dead-ended: consumer Agent plans have no CLI; where a CLI exists, the working directory and model flags differ per vendor and drift between versions; and even the exit code lies (auth failures still return 0).
 
-2.0 把这条链路整体删掉，只留两样真正稳定的东西：**一段可以粘贴的 Prompt，一个本机 MCP 端点**。
-谁执行、用什么模型、在哪个目录，交给你在 Agent 那边决定；Tree Todo 只负责「任务从哪来」和「完成由谁说了算」。
+2.0 deleted that whole chain and kept only the two things that are actually stable: **a prompt you can paste, and a local MCP endpoint**.
+Who executes, with which model, in which directory — that's your call on the Agent side. Tree Todo only owns "where tasks come from" and "who decides they're done".
 
-## 适用场景
+## Use cases
 
-| 场景 | 怎么用 |
+| Scenario | How it fits |
 | --- | --- |
-| **独立开发 / 一人公司** | 产品线 → 版本 → 功能 → 具体改动，几条线并行也看得清哪条堵着 |
-| **把活派给 AI** | 拆到叶子 → 复制带回执的 Prompt → 粘给 Agent → 回树上一键验收，进度和耗时都留在树上 |
-| **内容创作** | 选题 → 提纲 → 素材 → 发布，一篇文章就是一棵小树 |
-| **学习与考试** | 科目 → 章节 → 知识点，勾完一章自动收掉上层进度 |
-| **生活项目** | 搬家、婚礼、长途旅行准备——事项多、有依赖、要能随时看还剩多少 |
-| **目标拆解** | 年度目标 → 季度 KR → 本周行动项，配统计面板看推进节奏 |
+| **Indie dev / solopreneur** | Product line → version → feature → concrete change; with several lines in parallel you can still see which one is blocked |
+| **Delegating work to AI** | Break down to leaves → copy the prompt with receipt → paste to the Agent → review in one click back on the tree; progress and elapsed time stay on the tree |
+| **Content creation** | Topic → outline → material → publish; one article is one small tree |
+| **Studying for exams** | Subject → chapter → knowledge point; finishing a chapter collapses the progress above it automatically |
+| **Life projects** | Moving house, a wedding, planning a long trip — many items, dependencies, and a constant need to know what's left |
+| **Goal breakdown** | Annual goal → quarterly KR → this week's actions, with the stats panel to watch the pace |
 
-## 和其他工具的区别
+## How it compares
 
-| | 结构表达 | 任务状态 | 离线 / 本地 | 上手成本 |
+| | Structure | Task state | Offline / local | Learning curve |
 | --- | :---: | :---: | :---: | --- |
-| 平铺待办 App | 弱（缩进） | 强 | 多数要账号 | 低 |
-| 专业脑图工具 | 强 | 弱（无 pending / done） | 视产品而定 | 中 |
-| 项目管理 SaaS | 中 | 强 | 否 | 高 |
-| **Tree Todo** | **强** | **强（自动传播）** | **是（单机 SQLite）** | **低** |
+| Flat to-do apps | Weak (indentation) | Strong | Mostly needs an account | Low |
+| Mind-mapping tools | Strong | Weak (no pending / done) | Depends | Medium |
+| Project-management SaaS | Medium | Strong | No | High |
+| **Tree Todo** | **Strong** | **Strong (auto-propagated)** | **Yes (local SQLite)** | **Low** |
 
-还有一条差别在 AI 上：别的工具让 Agent 直接改任务状态，Tree Todo 只让 Agent 汇报到「待验收」。
-**执行的可以外包，验收不行。**
+There's one more difference when it comes to AI: other tools let an Agent change task state directly; Tree Todo only lets it report back to "Awaiting review".
+**Execution can be outsourced. Sign-off can't.**
 
-## 快速开始
+## Getting started
 
-### 直接下载
+### Download
 
-到 [Releases](https://github.com/Jeysin/tree-todo/releases) 下载对应平台的安装包：
+Grab the installer for your platform from [Releases](https://github.com/Jeysin/tree-todo/releases):
 
-| 平台 | 文件 |
+| Platform | File |
 | --- | --- |
-| macOS（Universal，Apple Silicon + Intel） | `Tree Todo_2.0.0_universal.dmg` |
-| Windows（x64） | `Tree Todo_2.0.0_x64-setup.exe` |
+| macOS (Universal, Apple Silicon + Intel) | `Tree Todo_2.0.0_universal.dmg` |
+| Windows (x64) | `Tree Todo_2.0.0_x64-setup.exe` |
 
-> 安装包尚未做代码签名与公证：macOS 首次打开请右键「打开」，或到「系统设置 → 隐私与安全性」中允许；
-> Windows 若提示 SmartScreen，点「更多信息 → 仍要运行」。
+> The installers are not yet code-signed or notarized: on macOS, right-click → "Open" the first time, or allow it in "System Settings → Privacy & Security";
+> on Windows, if SmartScreen warns, click "More info → Run anyway".
 >
-> 安装后无需再手动找新版本：应用启动时自动检查，也可点左上角版本号或菜单「检查更新…」。
-> Windows 支持应用内下载安装并重启；macOS 暂跳转 Releases 下载页。
+> Once installed you never need to hunt for new versions: the app checks on startup, and you can also click the version number in the top-left or use the menu "Check for Updates…".
+> Windows supports in-app download, install and restart; macOS currently opens the Releases download page.
 >
-> 1.0.0 用户需手动安装一次 2.0.0（旧版本不含更新能力）；从 2.0.0 起才能自动升级。
+> Users on 1.0.0 need to install 2.0.0 manually once (the old version has no updater); auto-upgrade starts from 2.0.0.
 
-### 从源码构建
+### Build from source
 
-#### 环境要求
+#### Requirements
 
-| 工具 | 版本 | 说明 |
+| Tool | Version | Notes |
 | --- | --- | --- |
-| Node.js | ≥ 22 | 前端构建 |
-| pnpm | ≥ 9 | 包管理器 |
-| Rust | stable（支持 edition 2024，≥ 1.85） | 后端与打包 |
+| Node.js | ≥ 22 | Frontend build |
+| pnpm | ≥ 9 | Package manager |
+| Rust | stable (edition 2024 support, ≥ 1.85) | Backend and bundling |
 | macOS | Xcode Command Line Tools | `xcode-select --install` |
-| Windows | MSVC 生成工具 + WebView2 Runtime | Win11 自带 WebView2，Win10 需单独安装 |
+| Windows | MSVC Build Tools + WebView2 Runtime | Win11 ships WebView2; Win10 needs a separate install |
 
-#### 构建与运行
+#### Build and run
 
 ```bash
 git clone https://github.com/Jeysin/tree-todo.git
 cd tree-todo
 
-pnpm install        # 安装前端依赖
-pnpm tauri dev      # 开发模式（前端热更新）
+pnpm install        # install frontend dependencies
+pnpm tauri dev      # dev mode (frontend hot reload)
 
-pnpm tauri build    # 打包当前平台的安装包
+pnpm tauri build    # build an installer for the current platform
 ```
 
-> 打包开启了自动更新的产物签名（`createUpdaterArtifacts`），本地执行 `pnpm tauri build`
-> 需要提供 `TAURI_SIGNING_PRIVATE_KEY`（见 `docs/08-auto-update.md` §4.4）；
-> 只构建不打包可用 `pnpm tauri build --no-bundle`。
+> Bundling enables updater artifact signing (`createUpdaterArtifacts`), so a local `pnpm tauri build`
+> needs `TAURI_SIGNING_PRIVATE_KEY` (see `docs/08-auto-update.md` §4.4);
+> to build without bundling, use `pnpm tauri build --no-bundle`.
 
-产物在 `src-tauri/target/release/bundle/`：
+Artifacts land in `src-tauri/target/release/bundle/`:
 
-- **macOS**：`macos/Tree Todo.app`、`dmg/Tree Todo_<version>_<arch>.dmg`
-- **Windows**：`nsis/Tree Todo_<version>_x64-setup.exe`
+- **macOS**: `macos/Tree Todo.app`, `dmg/Tree Todo_<version>_<arch>.dmg`
+- **Windows**: `nsis/Tree Todo_<version>_x64-setup.exe`
 
-首次编译需要 3–10 分钟（Rust 依赖全量构建），之后增量编译只要几秒。
+The first build takes 3–10 minutes (all Rust dependencies from scratch); incremental builds afterwards take seconds.
 
-### 数据存放位置
+### Where data is stored
 
-| 平台 | 路径 |
+| Platform | Path |
 | --- | --- |
 | macOS | `~/Library/Application Support/com.jeysin.treetodo/` |
 | Windows | `%APPDATA%\com.jeysin.treetodo\` |
 
-目录里 `documents.json` 是文档索引，`docs/<id>.db` 是每个文档的数据，`trash/` 是回收站，
-`mcp.json` 是 MCP 服务的端口与 token。
+Inside: `documents.json` is the document index, `docs/<id>.db` holds each document's data, `trash/` is the Trash,
+and `mcp.json` stores the MCP service's port and token.
 
-## 快捷键
+## Keyboard shortcuts
 
-macOS 用 `⌘`，Windows 用 `Ctrl`。
+Use `⌘` on macOS and `Ctrl` on Windows.
 
-| 操作 | 键位 | 操作 | 键位 |
+| Action | Key | Action | Key |
 | --- | --- | --- | --- |
-| 在根任务下新建 | `N` | 新建子任务 | `Tab` |
-| 新建同级任务 | `Enter` | 编辑节点 | `F2` / 双击 |
-| 完成 / 取消完成 | `S` | 删除节点 | `Delete` |
-| 撤销 / 重做 | `⌘Z` / `⇧⌘Z` | 搜索 | `⌘F` |
-| 树形 / 平铺 / 统计 | `⌘1` / `⌘2` / `⌘3` | 适应视图 | `⇧1` |
-| 折叠 / 展开节点 | `⌘.` / `⌘,` | 同级上移 / 下移 | `Alt+↑` / `Alt+↓` |
-| 复制 Prompt | `⌘⇧C` | 复制 Prompt（带回执） | `⌘⇧R` |
-| 节点详情 | `Alt+Enter` | 平移画布 | `Space` + 拖拽 |
+| New task under root | `N` | New subtask | `Tab` |
+| New sibling task | `Enter` | Edit node | `F2` / double-click |
+| Complete / uncomplete | `S` | Delete node | `Delete` |
+| Undo / redo | `⌘Z` / `⇧⌘Z` | Search | `⌘F` |
+| Tree / Flat / Stats | `⌘1` / `⌘2` / `⌘3` | Fit to view | `⇧1` |
+| Collapse / expand node | `⌘.` / `⌘,` | Move sibling up / down | `Alt+↑` / `Alt+↓` |
+| Copy Prompt | `⌘⇧C` | Copy Prompt (with receipt) | `⌘⇧R` |
+| Node details | `Alt+Enter` | Pan the canvas | `Space` + drag |
 
-## 技术栈
+## Tech stack
 
-| 层 | 选型 |
+| Layer | Choice |
 | --- | --- |
-| 桌面框架 | Tauri 2（macOS 应用包仅约 6 MB，内存占用远低于 Electron） |
-| 前端 | React 19 + TypeScript（strict）+ Vite + Tailwind CSS 4 + Zustand 5 |
-| 树渲染 | Mind Elixir 5（布局 / 缩放 / 拖拽 / 折叠 / 键盘导航） |
-| 后端 | Rust（edition 2024）+ rusqlite（内置 SQLite） |
-| 状态核心 | `src-tauri/src/propagate.rs`——纯逻辑的传播引擎，单测覆盖全部规则与边界用例 |
-| Agent 协同 | 本机 HTTP MCP server（`runtime/`）+ Prompt 组装（`agents/`），回执落库与节点同事务 |
+| Desktop framework | Tauri 2 (the macOS app bundle is only ~6 MB, with far lower memory use than Electron) |
+| Frontend | React 19 + TypeScript (strict) + Vite + Tailwind CSS 4 + Zustand 5 |
+| Tree rendering | Mind Elixir 5 (layout / zoom / drag / collapse / keyboard navigation) |
+| Backend | Rust (edition 2024) + rusqlite (bundled SQLite) |
+| Core logic | `src-tauri/src/propagate.rs` — a pure propagation engine, unit-tested across every rule and edge case |
+| Agent collaboration | Local HTTP MCP server (`runtime/`) + prompt assembly (`agents/`), receipts written in the same transaction as node changes |
 
 ```
-src/                  React 前端
-  components/         侧边栏、顶栏、状态栏、运行抽屉、Toast
-  views/tree/         树形（脑图）视图
-  views/flat/         平铺视图
-  views/stats/        统计视图
-  views/trash/        回收站
-  stores/             Zustand（只存渲染快照）
-  ipc/                Tauri command 的唯一 TS 出口
+src/                  React frontend
+  components/         Sidebar, top bar, status bar, run drawer, toasts
+  views/tree/         Tree (mind-map) view
+  views/flat/         Flat view
+  views/stats/        Stats view
+  views/trash/        Trash
+  stores/             Zustand (render snapshots only)
+  ipc/                The single TS gateway for Tauri commands
 src-tauri/src/
-  commands/           IPC 命令（校验 + 委托）
-  db/                 SQLite 访问与迁移
-  propagate.rs        状态传播引擎
-  history.rs          撤销 / 重做（快照式回放）
-  storage.rs          多文档、目录与回收站
-  agents/             Prompt 组装 + MCP 工具集
-  runtime/            本机 MCP 服务（固定端口 + 持久 token）
-docs/                 需求 / 数据模型 / 交互 / UI / 路线图 / Agent 协同
+  commands/           IPC commands (validation + delegation)
+  db/                 SQLite access and migrations
+  propagate.rs        Status propagation engine
+  history.rs          Undo / redo (snapshot-based replay)
+  storage.rs          Multiple documents, folders and Trash
+  agents/             Prompt assembly + MCP toolset
+  runtime/            Local MCP service (fixed port + persistent token)
+docs/                 Requirements / data model / interaction / UI / roadmap / Agent integration
 ```
 
-设计上的一个取舍：**领域规则只在 Rust 实现一次，前端不做任何状态推导**。
-所有变更命令走「写入 + 级联 + 向上传播」的同一事务，返回受影响的子树快照，前端合并即可。
-规则表与 8 个边界用例写在 [`docs/02-data-model.md`](docs/02-data-model.md)；
-Agent 侧的二阶段回执与验收权红线写在 [`docs/06-agent-integration.md`](docs/06-agent-integration.md)。
+One deliberate design choice: **domain rules are implemented exactly once, in Rust — the frontend derives no state at all**.
+Every mutating command runs "write + cascade + upward propagation" in a single transaction and returns the affected subtree snapshot for the frontend to merge.
+The rule table and 8 edge cases live in [`docs/02-data-model.md`](docs/02-data-model.md);
+the Agent's two-phase receipt and the sign-off boundary are in [`docs/06-agent-integration.md`](docs/06-agent-integration.md).
 
-## 参与贡献
+## Contributing
 
-- 发现问题或有想法：直接开 [Issue](../../issues)，附上复现步骤或截图
-- 提 PR 前请先读 [`AGENTS.md`](AGENTS.md)（代码规范）与 [`docs/02-data-model.md`](docs/02-data-model.md)（领域规则红线）
-- 提交前本地跑通：
+- Found a bug or have an idea? Open an [Issue](../../issues) with reproduction steps or a screenshot
+- Before a PR, please read [`AGENTS.md`](AGENTS.md) (code conventions) and [`docs/02-data-model.md`](docs/02-data-model.md) (domain-rule red lines). The design docs are written in Chinese.
+- Make sure these pass locally before submitting:
 
 ```bash
-cargo test                                   # 传播引擎单测必须全绿
-cargo clippy --all-targets -- -D warnings    # 零警告
-pnpm build                                   # 类型检查 + 前端构建
+cargo test                                   # propagation engine unit tests must all pass
+cargo clippy --all-targets -- -D warnings    # zero warnings
+pnpm build                                   # type check + frontend build
 ```
 
 ## License
 
 [MIT](LICENSE) © 2026 jeysin
+
+<p align="center">
+  <a href="./README.md">English</a> &nbsp;|&nbsp; <a href="./README.zh-CN.md">简体中文</a>
+</p>
