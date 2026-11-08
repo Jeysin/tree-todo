@@ -1,6 +1,3 @@
-<div align="right">
-  <b>English</b> &nbsp;|&nbsp; <a href="./README.zh-CN.md">简体中文</a>
-</div>
 
 <div align="center">
   <img src="assets/icon-1024.png" width="88" alt="Tree Todo" />
@@ -20,6 +17,10 @@
     <img src="https://img.shields.io/badge/Tauri-2-24C8DB" alt="Tauri 2" />
     <a href="https://github.com/Jeysin/tree-todo/releases/latest"><img src="https://img.shields.io/github/v/release/Jeysin/tree-todo?display_name=tag&sort=semver" alt="release" /></a>
   </p>
+</div>
+
+<div align="center">
+  <b>English</b> &nbsp;|&nbsp; <a href="./README.zh-CN.md">简体中文</a>
 </div>
 
 <br />
