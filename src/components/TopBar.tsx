@@ -45,7 +45,7 @@ const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string }
       { keys: [IS_MAC ? '⌘' : 'Ctrl', 'F'], label: '搜索' },
       { keys: ['⇧', '1'], label: '适应视图' },
       { keys: ['Space', '拖拽'], label: '平移画布' },
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', '. / ,'], label: '折叠 / 展开' },
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', '.'], label: '折叠 / 展开' },
     ],
   },
 ];

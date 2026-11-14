@@ -748,6 +748,10 @@ export function MindMapView() {
   }, []);
 
   // 树形视图专属快捷键；Tab / Enter / Delete / F2 / 方向键 / Alt+↑↓ / Space 交给 Mind Elixir。
+  //
+  // 必须挂在 capture 阶段：Mind Elixir 在 container 的 onkeydown 里处理 Enter（不区分修饰键），
+  // 冒泡阶段的 window 监听晚于它 —— Alt+Enter 会既打开详情又插入兄弟节点。
+  // 这里在 capture 截获并 stopPropagation，Mind Elixir 就收不到这个组合键。
   useEffect(() => {
     if (!loaded) return;
     const onKey = (e: KeyboardEvent) => {
@@ -767,7 +771,7 @@ export function MindMapView() {
         st.setSearchOpen(true);
         return;
       }
-      if (e.shiftKey && e.code === 'Digit1') {
+      if (!mod && !e.altKey && e.shiftKey && e.code === 'Digit1') {
         e.preventDefault();
         mindRef.current?.scaleFit();
         return;
@@ -790,11 +794,13 @@ export function MindMapView() {
         const id = st.selectedId;
         if (!id) return;
         e.preventDefault();
+        // 拦截 Mind Elixir 的 Enter（新建兄弟）—— 否则同一个组合键会执行两次。
+        e.stopPropagation();
         const rs = useRunStore.getState();
         rs.openDetail(rs.detailNodeId === id ? null : id);
         return;
       }
-      if (mod && (e.key === '.' || e.key === ',')) {
+      if (mod && e.key === '.') {
         const id = st.selectedId;
         if (!id) return;
         const mind = mindRef.current;
@@ -804,7 +810,8 @@ export function MindMapView() {
         const tpc = findTopic(mind, id);
         if (!tpc) return;
         e.preventDefault();
-        mind.expandNode(tpc, e.key === ',');
+        // Ctrl+, 已被全局「打开设置」占用，这里只保留 Ctrl+. 做折叠 / 展开切换。
+        mind.expandNode(tpc, st.nodes[id]?.collapsed === true);
         return;
       }
       if (!mod && !e.altKey && (e.key === 'n' || e.key === 'N')) {
@@ -826,8 +833,8 @@ export function MindMapView() {
         st.setSearchOpen(false);
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [loaded, onToggle, skipSync]);
 
   // 运行中节点每秒刷新徽标文字（全局只用一个 interval，docs/06 §9.4）。

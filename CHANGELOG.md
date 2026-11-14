@@ -11,6 +11,13 @@
 - **Gitee 发布渠道**：打 tag 后自动把 GitHub Release 的安装包镜像到 Gitee Release（`publish-gitee` job），也可用 `Mirror release to Gitee` 手动补传。两端产物同源、同一套 Ed25519 签名。用法与限制见 `docs/09-gitee-release.md`。
 - 新增 `pnpm release:gitee --tag vX.Y.Z`：本地一条命令完成「下载 GitHub 产物 → 建 Gitee Release → 传附件」，幂等可重跑。
 
+### 修复
+
+- `Alt+Enter` 打开节点详情时同时插入兄弟节点：快捷键监听改到 capture 阶段并拦截事件，Mind Elixir 不再收到这个组合键；同时移除与全局「打开设置」冲突的 `Ctrl+,` 展开绑定，折叠 / 展开统一用 `Ctrl+.` 切换。
+- 带回执 Prompt 里的 `agent_name` 示例使用具体产品名（Trae / Claude Code），Agent 会照抄导致回执显示错误的执行方；示例改为中性占位符并明确要求如实填写。
+- 待验收节点被用户直接勾选完成后仍留在运行抽屉的待验收列表：勾选时同步清理整棵子树的待验收执行态并刷新运行账本（含级联完成的父/子节点）。
+- 节点详情抽屉打开后，单击其他树节点详情内容不跟随切换；现在会跟随当前选中节点，并顺带修复快速切换节点时备注防抖未落盘就丢失的问题。
+
 ### 说明
 
 - Gitee Go 无 macOS 构建机（额度 200 分钟/仓库/月），安装包继续由 GitHub Actions 构建，Gitee 只承担分发。

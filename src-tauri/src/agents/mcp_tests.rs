@@ -130,6 +130,11 @@ fn initialize_and_tools_list() {
             .map(|t| t["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["tree_todo_start", "tree_todo_complete_tasks"]);
+        // 工具描述不得用具体产品名做示例：模型会照抄，回执里就会出现错误的 Agent 名。
+        let defs = list["result"]["tools"].to_string();
+        for name in ["Trae", "Claude Code", "Codex"] {
+            assert!(!defs.contains(name), "工具描述不得出现具体产品名示例：{name}");
+        }
         // 红线（D17）：工具集里不得有验收 / 勾选类工具。
         for n in &names {
             assert!(!n.contains("accept"), "不得有验收工具: {n}");

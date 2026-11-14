@@ -6,13 +6,13 @@
 
 use std::collections::HashSet;
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::clipboard::{self, ClipboardInfo};
 use crate::db::{exec, queries, runs};
 use crate::error::{AppError, AppResult};
 use crate::history;
-use crate::model::{Affected, CreateResult, Node, NodeStatus, PasteResult};
+use crate::model::{Affected, CreateResult, ExecState, Node, NodeStatus, PasteResult};
 use crate::propagate;
 use crate::AppState;
 
@@ -105,27 +105,60 @@ pub fn update_note(state: State<'_, AppState>, id: String, note: String) -> AppR
 
 /// 切换状态：pending → complete（M1/M2 级联）；done → uncomplete（M3 级联）。
 #[tauri::command]
-pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affected> {
+pub fn toggle_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
     let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
     let mut before = queries::subtree_nodes(&tx, &id)?;
     before.extend(queries::ancestors(&tx, node.parent_id.as_deref())?);
     let mut history = state.history.lock().expect("history mutex poisoned");
+    // 本次操作隐式验收过的 run：提交后要通知前端刷新运行账本。
+    let mut touched_runs: HashSet<String> = HashSet::new();
     let affected = history::run_with_history(&tx, before, &mut history, |tx| {
         // 手动勾选待验收节点 = 隐式验收；顺手清掉执行态，避免徽标残留。
-        let exec_run = node.execution.as_ref().and_then(|e| e.run_id.clone());
-        if let Some(rid) = &exec_run {
-            runs::set_review(tx, rid, std::slice::from_ref(&id), "accepted")?;
+        if let Some(rid) = node.execution.as_ref().and_then(|e| e.run_id.clone()) {
+            runs::set_review(tx, &rid, std::slice::from_ref(&id), "accepted")?;
+            touched_runs.insert(rid);
         }
         exec::clear_node(tx, &id)?;
-        let upserted = match node.status {
+        let mut upserted = match node.status {
             NodeStatus::Pending => propagate::complete(tx, &id)?,
             NodeStatus::Done => propagate::uncomplete(tx, &id)?,
         };
-        if let Some(rid) = &exec_run {
+        // 勾选会把整棵子树置 done：后代里仍在「待验收」的节点同样视为隐式验收。
+        // 不处理的话，它们会以 done 状态继续挂在运行抽屉的待验收列表里（状态机分叉）。
+        let mut cleared: Vec<String> = Vec::new();
+        for n in upserted.iter_mut() {
+            if n.status != NodeStatus::Done {
+                continue;
+            }
+            let (exec_state, run_id) = match n.execution.as_ref() {
+                Some(e) => (e.state, e.run_id.clone()),
+                None => continue,
+            };
+            if exec_state != ExecState::AwaitingReview {
+                continue;
+            }
+            if let Some(rid) = run_id {
+                runs::set_review(tx, &rid, std::slice::from_ref(&n.id), "accepted")?;
+                touched_runs.insert(rid);
+            }
+            exec::clear_node(tx, &n.id)?;
+            cleared.push(n.id.clone());
+        }
+        for rid in &touched_runs {
             runs::maybe_mark_reviewed(tx, rid)?;
             exec::sync_run(tx, rid)?;
+        }
+        // 执行态是在快照之后清掉的：把这些节点重新读一遍，前端才能看到徽标消失。
+        for nid in cleared {
+            if let Some(slot) = upserted.iter_mut().find(|n| n.id == nid) {
+                *slot = queries::get_node(tx, &nid)?;
+            }
         }
         Ok(Affected {
             upserted,
@@ -133,6 +166,14 @@ pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affect
         })
     })?;
     tx.commit()?;
+    drop(doc);
+    if !touched_runs.is_empty() {
+        let run_id = touched_runs.iter().next().cloned().unwrap_or_default();
+        let _ = app.emit(
+            "run:status",
+            serde_json::json!({ "runId": run_id, "reason": "accepted-node" }),
+        );
+    }
     Ok(affected)
 }
 

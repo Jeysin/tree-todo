@@ -25,6 +25,7 @@ export function NodeDetailPanel() {
   const openRun = useRunStore(s => s.openRun);
 
   const nodes = useTodoStore(s => s.nodes);
+  const selectedId = useTodoStore(s => s.selectedId);
   const node = nodeId ? nodes[nodeId] : undefined;
   const path = useMemo(() => (nodeId ? breadcrumb({ nodes }, nodeId) : []), [nodeId, nodes]);
   const [note, setNote] = useState('');
@@ -32,6 +33,37 @@ export function NodeDetailPanel() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [now, setNow] = useState(Date.now());
   const loadedFor = useRef<string | null>(null);
+  const prevSelectedId = useRef<string | null>(selectedId);
+  /** 尚未落盘的备注草稿：切换节点时立即写回，避免防抖窗口内切换丢字。 */
+  const noteDraft = useRef<{ id: string; note: string } | null>(null);
+
+  // 详情抽屉打开时跟随树上的选中变化：点其他节点即可快速切换查看。
+  // 只响应「选中变化」而不是无条件对齐 selectedId —— 否则从执行徽标打开
+  // 一个未选中的节点时，会被旧选中立刻覆盖。
+  useEffect(() => {
+    const prev = prevSelectedId.current;
+    prevSelectedId.current = selectedId;
+    if (nodeId && selectedId && selectedId !== prev && selectedId !== nodeId) {
+      close(selectedId);
+    }
+  }, [selectedId, nodeId, close]);
+
+  // 切换 / 关闭详情 / 卸载前，把未落盘的备注草稿立即保存（防抖窗口内切换不丢字）。
+  useEffect(() => {
+    return () => {
+      const draft = noteDraft.current;
+      noteDraft.current = null;
+      if (!draft) return;
+      const stored = useTodoStore.getState().nodes[draft.id]?.note ?? '';
+      if (stored === draft.note) return;
+      void ipc
+        .updateNote(draft.id, draft.note)
+        .then(af => useTodoStore.getState().applyAffected(af))
+        .catch(e =>
+          useTodoStore.getState().showToast((e as { message?: string })?.message ?? '保存失败'),
+        );
+    };
+  }, [nodeId]);
 
   useEffect(() => {
     if (!node) return;
@@ -226,7 +258,10 @@ export function NodeDetailPanel() {
           <div className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2">补充说明</div>
           <textarea
             value={note}
-            onChange={e => setNote(e.target.value)}
+            onChange={e => {
+              setNote(e.target.value);
+              if (node) noteDraft.current = { id: node.id, note: e.target.value };
+            }}
             placeholder="补充说明（可选）——标题已经足够清楚时不必填"
             className="w-full h-40 px-2.5 py-2 rounded-md border border-border bg-base text-xs leading-5 outline-none focus:border-accent resize-none"
           />
