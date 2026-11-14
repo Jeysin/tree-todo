@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -23,6 +24,10 @@ use crate::error::{AppError, AppResult};
 
 /// MCP 默认端口（docs/06 v2 §4.3；设置页可改，被占用时自动 +1 重试）。
 pub const DEFAULT_MCP_PORT: u16 = 39401;
+
+/// 关闭服务后重新打开时，为「自己刚释放的端口」预留的重绑等待上限。
+/// 实测 macOS 约 30ms（等 FIN 握手收尾），留足余量以适配 CI 的慢机器。
+const REBIND_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Serialize, Deserialize)]
 struct McpFile {
@@ -45,6 +50,9 @@ pub struct RuntimeState {
     server: Mutex<Option<Arc<tiny_http::Server>>>,
     /// serve 线程句柄；关闭时 join，确保端口先释放再允许重新绑定。
     thread: Mutex<Option<JoinHandle<()>>>,
+    /// 上一次由本服务释放的端口。刚关闭的监听会留下正在收尾的连接，
+    /// 立刻重绑可能拿到 EADDRINUSE（见 `bind_server_waiting`）。
+    released_port: Mutex<Option<u16>>,
     /// 启停时 spawn 线程用。
     app: AppHandle,
 }
@@ -108,12 +116,23 @@ impl RuntimeState {
         let file = read_mcp_file(&self.mcp_json)?;
 
         let mut bound: Option<(tiny_http::Server, u16)> = None;
+        let released = *self
+            .released_port
+            .lock()
+            .expect("released port mutex poisoned");
         for offset in 0..10u16 {
             let port = file.port.saturating_add(offset);
             if port == 0 {
                 break;
             }
-            if let Some(server) = bind_server(port) {
+            // 首选端口可能是自己刚关掉的：内核还没走完上一次连接的收尾，
+            // 给它一小段时间再判「被占用」；其余端口是别人的，失败就立刻试下一个。
+            let server = if offset == 0 && released == Some(port) {
+                bind_server_waiting(port, REBIND_TIMEOUT)
+            } else {
+                bind_server(port)
+            };
+            if let Some(server) = server {
                 bound = Some((server, port));
                 break;
             }
@@ -140,6 +159,10 @@ impl RuntimeState {
 
         let server = Arc::new(server);
         *self.port.lock().expect("port mutex poisoned") = Some(port);
+        *self
+            .released_port
+            .lock()
+            .expect("released port mutex poisoned") = None;
         *server_slot = Some(Arc::clone(&server));
 
         let st = Arc::clone(self);
@@ -159,7 +182,12 @@ impl RuntimeState {
         if let Some(handle) = self.thread.lock().expect("thread mutex poisoned").take() {
             let _ = handle.join();
         }
-        *self.port.lock().expect("port mutex poisoned") = None;
+        let port = self.port.lock().expect("port mutex poisoned").take();
+        // 记下刚释放的端口：重新打开时要对它多等一会儿（`bind_server_waiting`）。
+        *self
+            .released_port
+            .lock()
+            .expect("released port mutex poisoned") = port;
     }
 }
 
@@ -187,6 +215,28 @@ fn bind_server(port: u16) -> Option<tiny_http::Server> {
     socket.listen(128).ok()?;
     let listener: std::net::TcpListener = socket.into();
     tiny_http::Server::from_listener(listener, None).ok()
+}
+
+/// 重新打开服务时给「自己刚释放的端口」用：`disable()` 只是关掉监听与连接，
+/// 内核还要走完 FIN 握手。这段时间内 bind 会拿到 EADDRINUSE——
+/// SO_REUSEADDR 只放过 TIME_WAIT，管不了仍在收尾的连接（macOS 实测约 30ms）。
+///
+/// 不重试的后果不是报错而是**端口漂移**：`enable()` 会一路试到 port+1，
+/// 改掉 mcp.json 里的端口，已经配好的 Agent 就静默失联了。
+fn bind_server_waiting(port: u16, timeout: Duration) -> Option<tiny_http::Server> {
+    let deadline = Instant::now() + timeout;
+    let mut backoff = Duration::from_millis(2);
+    loop {
+        if let Some(server) = bind_server(port) {
+            return Some(server);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return None;
+        }
+        thread::sleep(backoff.min(deadline - now));
+        backoff = (backoff * 2).min(Duration::from_millis(40));
+    }
 }
 
 fn write_mcp_json(path: &PathBuf, file: &McpFile) -> AppResult<()> {
@@ -227,6 +277,7 @@ pub fn start(app: AppHandle, data_dir: PathBuf, enabled: bool) -> AppResult<Arc<
         mcp_json,
         server: Mutex::new(None),
         thread: Mutex::new(None),
+        released_port: Mutex::new(None),
         app,
     });
 
@@ -337,7 +388,11 @@ mod tests {
         assert!(!is_loopback_origin("https://192.168.1.5"));
     }
 
-    /// 开关 MCP 的前提：unblock + 释放后，同一端口能立刻重新绑定。
+    /// 开关 MCP 的前提：unblock + 释放后，同一端口在 `REBIND_TIMEOUT` 内能重新绑定。
+    ///
+    /// 断言不能写「立即」：关闭监听时最后一条连接的 FIN 握手还在路上，
+    /// 这段时间 bind 会拿到 EADDRINUSE（macOS 实测最坏 ~32ms），
+    /// 所以这里走生产同一条 `bind_server_waiting` 路径，验的是真正的保证。
     #[test]
     fn server_can_rebind_same_port_after_unblock() {
         let server = super::bind_server(0).expect("bind ephemeral port");
@@ -368,7 +423,7 @@ mod tests {
         handle.join().unwrap();
         drop(server);
 
-        let rebound = super::bind_server(port);
-        assert!(rebound.is_some(), "同一端口应能在关闭后立即重新绑定");
+        let rebound = super::bind_server_waiting(port, super::REBIND_TIMEOUT);
+        assert!(rebound.is_some(), "同一端口应能在关闭后重新绑定");
     }
 }
