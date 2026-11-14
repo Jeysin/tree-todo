@@ -44,20 +44,22 @@ src-tauri/      # Rust 后端
   src/model.rs     # 核心数据结构
   src/db/          # SQLite 访问与迁移
   src/propagate.rs # 状态传播引擎（领域核心，纯逻辑）
+  src/clipboard.rs # 节点剪贴板快照与重建（纯逻辑）
   src/error.rs     # 统一错误类型
 docs/           # 技术文档
 ```
 
 ## 领域规则红线（违反即 bug）
 
-1. **状态传播只在 Rust 层实现**。所有节点状态变更必须经 Tauri command → `propagate.rs`，前端**不得**在任何路径自行计算或修改状态。规则定义见 `docs/02-data-model.md` §2（规则表 C1/M1/M2/M3/D1 + 向上传播算法 + Corner Cases CC1–CC8）。
+1. **状态传播只在 Rust 层实现**。所有节点状态变更必须经 Tauri command → `propagate.rs`，前端**不得**在任何路径自行计算或修改状态。规则定义见 `docs/02-data-model.md` §2（规则表 C1/M1/M2/M3/D1/MV1/CP1 + 向上传播算法 + Corner Cases CC1–CC9）。
 2. **操作与传播必须同一事务**。任何变更类 command 要么完整提交（写入 + 级联 + 向上传播），要么整体回滚。
 3. **前端只持有渲染快照**，每次变更后以 Rust 返回的最新数据为准，不维护第二份真相。
-4. **新建节点永远是 pending**（不变量 I4），无任何例外。
+4. **新建节点永远是 pending**（不变量 I4）；**唯一例外是复制粘贴**——粘贴整棵子树时保留源节点的 `status` / `completed_at`（见第 9 条与 `docs/02-data-model.md` §2.6）。
 5. 修改 schema 必须走迁移（`schema_version`），禁止改表不升版本。
 6. **撤销历史**（v0.2 起）：除视图类操作（`set_collapsed` / `expand_nodes` / `collapse_all`）外，所有变更必须经 `history::run_with_history` 记录（before 快照 + after 变更）——绕过记录会导致撤销破坏数据一致性。回放走 `history::apply_patch`，禁止在回放后再次传播。
 7. **回收站对象是文档**（v0.4 起）：删除文档时把 `docs/{id}.db*` 移入 `trash/` 并记录在 `documents.json` 的 `trash` 列表；节点删除是物理删除（根任务不可删），通过 Rust 历史快照支持撤销。所有视图查询仍统一过滤 `deleted_at IS NULL`（该字段保留兼容，v0.4 不再写入）；`completed_at` 只能由 `update_status` / 级联 SQL 维护。
 8. **单根模型**（v0.4 起）：每个文档只有一个根任务（`parent_id IS NULL`），根任务可编辑/可完成、不可删除/不可拖拽；多任务线通过多文档承载。
+9. **复制粘贴保留完成状态**（v2.1 起，I4 唯一例外）：剪贴板是 Rust 侧内存快照（`clipboard.rs`），切换文档只清撤销历史、不清剪贴板以支持跨文档粘贴；粘贴原样保留源节点的 `status` / `completed_at`，但**不复制执行态**（`exec_*` / run 账本）；必须经 `history::run_with_history` 在同一事务内完成插入 + 目标展开 + 向上传播，由传播引擎保证 I2。规则见 `docs/02-data-model.md` §2.6。
 
 ## 代码规范
 
@@ -88,6 +90,6 @@ docs/           # 技术文档
 
 ## 测试要求
 
-- `propagate.rs`、`db/`：单元测试必须覆盖对应规则表的每一行 + 全部 Corner Cases；新增行为先写测试。
+- `propagate.rs`、`clipboard.rs`、`db/`：单元测试必须覆盖对应规则表的每一行 + 全部 Corner Cases（含 CP1 / CC9）；新增行为先写测试。
 - 前端：状态传播相关交互（完成/取消/级联）须有集成冒烟；布局纯函数（`lib/`）须有单测。
 - 提交前：`cargo test` + `cargo clippy` + `pnpm build` 全绿。

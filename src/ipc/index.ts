@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   Affected,
   AppSettings,
+  ClipboardInfo,
   CopyResult,
   CreateResult,
   DocIndex,
@@ -16,6 +17,7 @@ import type {
   FolderMeta,
   ImportResult,
   McpConfig,
+  PasteResult,
   RunView,
   TodoNode,
   TrashItem,
@@ -64,6 +66,14 @@ export const ipc = {
   /** 撤销 / 重做（无历史时返回 null）。 */
   undo: (): Promise<Affected | null> => invoke('undo'),
   redo: (): Promise<Affected | null> => invoke('redo'),
+
+  // ── 节点复制 / 粘贴（文档内 + 跨文档，剪贴板在 Rust 内存中）──
+  /** 复制选中节点及其完整子树；同时把缩进纯文本写入系统剪贴板。 */
+  copyNodes: (ids: string[]): Promise<ClipboardInfo> => invoke('copy_nodes', { ids }),
+  /** 粘贴为指定节点的子节点；返回新建的顶层节点 id 与受影响快照。 */
+  pasteNodes: (parentId: string): Promise<PasteResult> => invoke('paste_nodes', { parentId }),
+  /** 当前剪贴板摘要（null = 空）；启动时用于恢复「粘贴」菜单项可用态。 */
+  clipboardInfo: (): Promise<ClipboardInfo | null> => invoke('clipboard_info'),
 
   // ── 导出 / 导入（v0.5：以文档 / 目录 / 全部为单位，导入即整体还原）──
   /** 导出单个文档到指定路径。 */

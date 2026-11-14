@@ -115,6 +115,23 @@ export interface CreateResult {
   upserted: TodoNode[];
 }
 
+/** 应用内节点剪贴板摘要（Rust 内存快照，跨文档保留；进程重启后失效）。 */
+export interface ClipboardInfo {
+  /** 顶层节点数（粘贴后新增的直接子节点数）。 */
+  nodeCount: number;
+  /** 含全部子孙的节点总数。 */
+  totalCount: number;
+  /** 简短摘要，如「买域名」「买域名 等 3 项」。 */
+  summary: string;
+  sourceDocId: string;
+  sourceDocName: string;
+}
+
+/** paste_nodes 返回：新建的顶层节点 id + 统一的受影响快照。 */
+export interface PasteResult extends Affected {
+  newIds: string[];
+}
+
 /** Rust 侧 AppError 的序列化形态（docs/01 D6：带错误码）。 */
 export interface AppError {
   code:

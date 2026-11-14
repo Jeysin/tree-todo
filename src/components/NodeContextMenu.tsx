@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { ClipboardCheck, ClipboardCopy, PanelRight, X } from 'lucide-react';
+import { ClipboardCheck, ClipboardCopy, ClipboardPaste, Copy, PanelRight, X } from 'lucide-react';
 
 import { useRunStore } from '../stores/runStore';
+import { useTodoStore } from '../stores/todoStore';
 
 export interface MenuState {
   x: number;
@@ -13,13 +14,16 @@ export interface MenuState {
 
 /** 菜单宽度（px）：需容下最长项「复制 Prompt（带回执）」+ 快捷键，避免折行。 */
 const MENU_WIDTH = 288;
-/** 单项行高（h-8）+ 分隔线，用于贴边翻转。 */
-const MENU_HEIGHT = 180;
+/** 6 个单项（h-8）+ 3 条分隔线 + 上下内边距，用于贴边翻转。 */
+const MENU_HEIGHT = 240;
 
 export function NodeContextMenu({ state, onClose }: { state: MenuState | null; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const openDetail = useRunStore(s => s.openDetail);
   const copyPrompt = useRunStore(s => s.copyPrompt);
+  const clipboard = useTodoStore(s => s.clipboard);
+  const copyNodes = useTodoStore(s => s.copyNodes);
+  const pasteNodes = useTodoStore(s => s.pasteNodes);
 
   useEffect(() => {
     if (!state) return;
@@ -40,7 +44,6 @@ export function NodeContextMenu({ state, onClose }: { state: MenuState | null; o
   if (!state) return null;
   const x = Math.min(state.x, window.innerWidth - MENU_WIDTH - 8);
   const y = Math.min(state.y, window.innerHeight - MENU_HEIGHT - 8);
-  const multi = state.nodeIds.length > 1;
 
   return (
     <div
@@ -64,6 +67,35 @@ export function NodeContextMenu({ state, onClose }: { state: MenuState | null; o
       <div className="my-1 border-t border-border" />
       <button
         onClick={() => {
+          void copyNodes(state.nodeIds);
+          onClose();
+        }}
+        className="w-full flex items-center gap-2 px-3 h-8 text-left text-primary hover:bg-base"
+      >
+        <Copy className="w-3.5 h-3.5 shrink-0 text-muted" />
+        <span className="min-w-0 truncate">复制节点（含子树）</span>
+        <span className="ml-auto shrink-0 text-[10.5px] text-muted">⌘/Ctrl+C</span>
+      </button>
+      <button
+        disabled={!clipboard}
+        title={
+          clipboard
+            ? `来自「${clipboard.sourceDocName || '其他文档'}」：${clipboard.summary}（共 ${clipboard.totalCount} 个节点）`
+            : '请先复制节点'
+        }
+        onClick={() => {
+          void pasteNodes(state.nodeId);
+          onClose();
+        }}
+        className="w-full flex items-center gap-2 px-3 h-8 text-left text-primary hover:bg-base disabled:text-muted disabled:hover:bg-transparent disabled:cursor-not-allowed"
+      >
+        <ClipboardPaste className="w-3.5 h-3.5 shrink-0 text-muted" />
+        <span className="min-w-0 truncate">粘贴为子节点</span>
+        <span className="ml-auto shrink-0 text-[10.5px] text-muted">⌘/Ctrl+V</span>
+      </button>
+      <div className="my-1 border-t border-border" />
+      <button
+        onClick={() => {
           void copyPrompt(state.nodeIds, 'plain');
           onClose();
         }}
@@ -71,7 +103,6 @@ export function NodeContextMenu({ state, onClose }: { state: MenuState | null; o
       >
         <ClipboardCopy className="w-3.5 h-3.5 shrink-0 text-muted" />
         <span className="min-w-0 truncate">复制 Prompt</span>
-        {multi && <span className="shrink-0 text-[10.5px] text-accent">×{state.nodeIds.length}</span>}
         <span className="ml-auto shrink-0 text-[10.5px] text-muted">Ctrl+Shift+C</span>
       </button>
       <button
@@ -83,7 +114,6 @@ export function NodeContextMenu({ state, onClose }: { state: MenuState | null; o
       >
         <ClipboardCheck className="w-3.5 h-3.5 shrink-0 text-muted" />
         <span className="min-w-0 truncate">复制 Prompt（带回执）</span>
-        {multi && <span className="shrink-0 text-[10.5px] text-accent">×{state.nodeIds.length}</span>}
         <span className="ml-auto shrink-0 text-[10.5px] text-muted">Ctrl+Shift+R</span>
       </button>
       <div className="my-1 border-t border-border" />

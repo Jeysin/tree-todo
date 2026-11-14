@@ -26,6 +26,7 @@
 | P2 | 目录层级 | 侧边栏目录可嵌套，目录下可新建目录与文档；目录可整体导出 | v0.5 |
 | P2 | 导出 / 导入（文档 / 目录 / 全部） | 与导出互逆的整体还原；不再支持「追加到现有文档」 | v0.5 |
 | P2 | 隐藏已完成 | 树形视图按文档记忆的过滤开关 | v0.5 |
+| P2 | 节点复制 / 粘贴 | 文档内与跨文档；整棵子树连结构、备注、顺序与完成状态一起复制；粘贴为选中节点的子节点 | v2.1 |
 | P1 | 自动更新 | 启动自动检查；左上角版本号与系统菜单双入口；弹窗展示版本介绍并下载安装（macOS 跳下载页） | v2.0.0 |
 | P2 | 快捷键自定义 / 多设备同步 / 协作 | 视产品反馈决定 | v1.x+ |
 
@@ -115,10 +116,14 @@
 | 切换状态 | 点击 checkbox / `S` | 按 M1/M2/M3 规则执行（含级联与传播）；Space 保留给画布平移 |
 | 删除节点 | `Delete` / `Backspace` | 物理删除并级联删除子孙；根任务不可删除；静默删除 + toast 撤销（复用 Rust 历史） |
 | 折叠 / 展开 | Mind Elixir 折叠角标 / `Ctrl+.` / `Ctrl+,` | 当前节点折叠 / 展开 |
+| 复制节点（含子树） | `Ctrl/⌘+C` / 右键菜单 | 把选中节点及其全部子孙、备注与顺序存入 Rust 剪贴板；多选时按选区整体复制；只读，不进撤销历史 |
+| 粘贴为子节点 | `Ctrl/⌘+V` / 右键菜单 | 粘贴为选中节点的子节点；完成状态与完成时间一起保留，目标父按 I2 重算（全 done 子树保持 done，含 pending 则回退）；一次粘贴 = 一条撤销记录 |
 | 上下移动焦点 | `↑` / `↓` | Mind Elixir 原生导航顺序 |
 | 视图切换 | `Ctrl+1` / `Ctrl+2` | 树形 / 平铺 |
 
 编辑态通用规则：编辑中 `Enter` / `Tab` 仅提交当前编辑（Mind Elixir 原生行为）；提交后再次按 `Tab` / `Enter` 创建子/兄弟节点；`Esc` 取消并还原。
+
+**复制 / 粘贴（v2.1）**：入口是节点右键菜单与 `Ctrl/⌘+C` / `Ctrl/⌘+V`（macOS 用 `⌘`，Windows 用 `Ctrl`）。右键落在多选选区内时，复制作用于整个选区；粘贴始终作用于当前右键 / 选中的**单个**节点，默认成为它的**子节点**而不是兄弟节点。剪贴板保存在 Rust 内存中，切换文档后仍然有效，因此天然支持跨文档搬运；进程重启后清空。复制是纯读操作，粘贴作为一次变更进入撤销历史。字段与状态口径见 `02-data-model.md` §2.6；快捷键在输入框 / 内联编辑中让位给原生文本复制粘贴，`Ctrl/⌘+Shift+C/R` 仍是「复制 Prompt」，互不抢占。
 
 ## 5. 数据安全
 
@@ -160,8 +165,9 @@
 
 ## 8. IPC 数据流约定（决策 D6）
 
-- command 清单（v0.5）：`get_tree`、`create_node`、`update_content`、`update_note`、`toggle_status`、`delete_node`、`move_node`、`set_collapsed`、`expand_nodes`、`collapse_all`、`undo`、`redo`；文档 / 目录：`list_documents`、`create_document`、`rename_document`、`delete_document`、`create_folder`、`rename_folder`、`delete_folder`、`switch_document`、`get_current_document`；导入导出：`export_document`、`export_folder`、`export_all`、`import_bundle`。v0.6 起 `move_document` / `move_folder` 增加 `position` 参数用于侧边栏排序，并新增 `get_settings` / `set_trash_retention_days`。
+- command 清单（v0.5）：`get_tree`、`create_node`、`update_content`、`update_note`、`toggle_status`、`delete_node`、`move_node`、`set_collapsed`、`expand_nodes`、`collapse_all`、`undo`、`redo`；文档 / 目录：`list_documents`、`create_document`、`rename_document`、`delete_document`、`create_folder`、`rename_folder`、`delete_folder`、`switch_document`、`get_current_document`；导入导出：`export_document`、`export_folder`、`export_all`、`import_bundle`。v0.6 起 `move_document` / `move_folder` 增加 `position` 参数用于侧边栏排序，并新增 `get_settings` / `set_trash_retention_days`。v2.1 起新增 `copy_nodes` / `paste_nodes` / `clipboard_info`（节点复制粘贴，见 §4）。
 - `create_node` 额外返回 `newId`（前端创建后立即选中并进入编辑态）。
+- **`copy_nodes`** 只读、返回剪贴板摘要（顶层数 / 总节点数 / 摘要文案 / 来源文档），不生成历史；**`paste_nodes`** 返回 `newIds` + 受影响快照，前端据此选中首个新节点并触发结构全量 refresh；**`clipboard_info`** 供启动时恢复「粘贴」入口的可用态。
 - 每个**变更类** command 返回**受影响子树的最新快照**（操作节点 + 级联子孙 + 被传播修改的祖先链），前端 store 合并后受控刷新。
 - **撤销约定（v0.2）**：除视图类命令（`set_collapsed` / `expand_nodes` / `collapse_all`）外，所有变更类命令必须记录历史（快照式 before/after，上限 100 步）；`undo` / `redo` 返回可直接合并的 patch（无历史时为 `null`）。节点删除也已改为物理删除，撤销通过历史快照恢复。
 - **文档回收站（v0.4）**：删除文档不物理删除 SQLite 文件，而是把 `docs/{id}.db*` 移入 `trash/` 并在 `documents.json` 的 `trash` 列表中记录；恢复/彻底删除/清空只作用于文档文件。

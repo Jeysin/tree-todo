@@ -9,7 +9,16 @@ import { create } from 'zustand';
 import { confirm, open, save } from '@tauri-apps/plugin-dialog';
 
 import { ipc } from '../ipc';
-import type { Affected, AppError, DocMeta, FolderMeta, TodoNode, TrashItem } from '../ipc/types';
+import type {
+  Affected,
+  AppError,
+  ClipboardInfo,
+  DocMeta,
+  FolderMeta,
+  PasteResult,
+  TodoNode,
+  TrashItem,
+} from '../ipc/types';
 
 export type ViewMode = 'tree' | 'flat' | 'stats' | 'trash' | 'settings';
 export type Theme = 'system' | 'light' | 'dark';
@@ -114,6 +123,8 @@ interface TodoState {
   toast: Toast | null;
   /** 搜索浮层开关（TopBar 搜索按钮 / Ctrl+F 触发）。 */
   searchOpen: boolean;
+  /** 应用内节点剪贴板摘要（null = 空），决定「粘贴」入口的可用态与提示文案。 */
+  clipboard: ClipboardInfo | null;
 
   // ── actions ──
   loadTree: () => Promise<void>;
@@ -123,6 +134,10 @@ interface TodoState {
   revealNode: (id: string) => Promise<void>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
+  // 节点复制 / 粘贴（文档内 + 跨文档）
+  refreshClipboard: () => Promise<void>;
+  copyNodes: (ids: string[]) => Promise<void>;
+  pasteNodes: (parentId: string) => Promise<void>;
   // 导入导出（v0.5：文档 / 目录 / 全部）
   exportDocument: (id: string, name: string) => Promise<void>;
   exportFolder: (id: string, name: string) => Promise<void>;
@@ -212,6 +227,7 @@ export const useTodoStore = create<TodoState>((set, get) => ({
   hideDone: false,
   toast: null,
   searchOpen: false,
+  clipboard: null,
 
   async loadTree() {
     const list = await ipc.getTree();
@@ -314,6 +330,55 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     } catch (e) {
       console.error('redo failed:', e);
       get().showToast(errMsg(e, '重做失败'));
+    }
+  },
+
+  // ── 节点复制 / 粘贴 ──
+  /** 启动时同步 Rust 侧剪贴板状态（进程内跨文档保留，重启后为空）。 */
+  async refreshClipboard() {
+    try {
+      set({ clipboard: await ipc.clipboardInfo() });
+    } catch (e) {
+      console.error('clipboardInfo failed:', e);
+    }
+  },
+
+  /** 复制整棵子树到 Rust 剪贴板；复制本身是只读操作，不进撤销历史。 */
+  async copyNodes(ids) {
+    if (ids.length === 0) {
+      get().showToast('请先选中要复制的节点');
+      return;
+    }
+    try {
+      const info = await ipc.copyNodes(ids);
+      set({ clipboard: info });
+      const extra = info.totalCount > info.nodeCount ? `（共 ${info.totalCount} 个节点）` : '';
+      get().showToast(`已复制「${info.summary}」${extra}`);
+    } catch (e) {
+      console.error('copyNodes failed:', e);
+      get().showToast(errMsg(e, '复制失败'));
+    }
+  },
+
+  /** 粘贴为 parentId 的子节点；结构变化由 MindMapView 的 sync effect 全量 refresh。 */
+  async pasteNodes(parentId) {
+    if (!get().clipboard) {
+      get().showToast('剪贴板为空，请先复制节点');
+      return;
+    }
+    try {
+      const result: PasteResult = await ipc.pasteNodes(parentId);
+      get().applyAffected(result);
+      const first = result.newIds[0] ?? parentId;
+      set({ selectedId: first, selectedIds: first ? [first] : [], flashId: first });
+      if (flashTimer) clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => set({ flashId: null }), 2400);
+      get().showToast(`已粘贴 ${result.newIds.length} 个节点 · 撤销`, true);
+    } catch (e) {
+      console.error('pasteNodes failed:', e);
+      get().showToast(errMsg(e, '粘贴失败'));
+      // 事务失败不写本地快照；刷新一次剪贴板状态，避免菜单停留在过期的可用态。
+      void get().refreshClipboard();
     }
   },
 

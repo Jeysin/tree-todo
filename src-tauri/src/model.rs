@@ -246,6 +246,16 @@ pub struct CreateResult {
     pub upserted: Vec<Node>,
 }
 
+/// paste_nodes 专属返回：额外标出所有新建的顶层节点 id（前端粘贴后立即选中）。
+/// `affected` 展平为 `upserted` / `removed`，与其他变更类 command 保持同一合并入口。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasteResult {
+    pub new_ids: Vec<String>,
+    #[serde(flatten)]
+    pub affected: Affected,
+}
+
 /// 回收站文档：被删除的文档元数据 + 删除时间。
 /// 回收站只回收文档，节点删除是物理删除（可用撤销历史恢复）。
 #[derive(Debug, Clone, Serialize, Deserialize)]

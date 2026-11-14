@@ -169,6 +169,15 @@ Follow system / Light / Dark — switch at any time.
 - Windows downloads, installs and restarts in-app; macOS opens the Releases download page (not yet signed / notarized)
 - Updates only replace the binary — documents, folders, Trash and run records are untouched
 
+### 14. Copy & paste nodes: take the whole subtree with you
+
+Right-click a node → **Copy node (with subtree)**, then right-click the destination → **Paste as child node**; or just `⌘C` / `⌘V` (`Ctrl` on Windows). Copy a parent and every descendant, its notes and its ordering come along — paste them under any node, even in a **different document**.
+
+- Select several nodes to copy them all at once; when an ancestor is already in the selection, its descendants are skipped so nothing is duplicated
+- The clipboard lives in the Rust process and survives document switches, so copying from document A into document B just works; it is cleared when the app exits
+- Pasted nodes keep their completion state: done subtrees stay done (including their completion timestamps), and the destination parent is recalculated from its children — it stays done if the pasted subtree is all done, and reopens only if pending items came along. Agent execution badges and run records are not copied; the whole paste is one `⌘Z` away from being undone
+- Copying also puts an indented plain-text outline on the system clipboard, handy for pasting a plan into a chat or an email
+
 ## Working with AI Agents: 3-Step Setup
 
 > Works with any MCP-capable Agent (Trae, Claude Code, Codex, Cursor…).
@@ -367,6 +376,7 @@ Use `⌘` on macOS and `Ctrl` on Windows.
 | Tree / Flat / Stats | `⌘1` / `⌘2` / `⌘3` | Fit to view | `⇧1` |
 | Collapse / expand node | `⌘.` / `⌘,` | Move sibling up / down | `Alt+↑` / `Alt+↓` |
 | Copy Prompt | `⌘⇧C` | Copy Prompt (with receipt) | `⌘⇧R` |
+| Copy node (with subtree) | `⌘C` | Paste as child node | `⌘V` |
 | Node details | `Alt+Enter` | Pan the canvas | `Space` + drag |
 
 ## Tech stack

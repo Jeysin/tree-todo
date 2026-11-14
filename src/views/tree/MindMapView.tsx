@@ -443,7 +443,10 @@ function installMindBehavior(
     }
   };
 
-  // 6) 不支持的 Mind Elixir 编辑入口：插入父节点 / 复制粘贴不走 Rust，直接禁用，避免第二份数据。
+  // 6) 不支持的 Mind Elixir 编辑入口：插入父节点 / 内置复制粘贴不走 Rust，直接禁用，
+  //    避免第二份数据。真正的节点复制粘贴由 App.tsx 在 capture 阶段接管 Cmd/Ctrl+C/V，
+  //    走 Rust 剪贴板（copy_nodes / paste_nodes）；这里保留置空作为兜底，
+  //    防止任何残留的 paste 事件触发 Mind Elixir 本地插入。
   mind.insertParent = async () => {};
   mind.copyNode = async () => {};
   mind.copyNodes = async () => {};

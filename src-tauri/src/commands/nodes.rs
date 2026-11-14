@@ -4,12 +4,15 @@
 //! 所有变更均记录 history entry（before 快照 + after 变更）。
 //! v0.3：数据源为「当前文档」（state.current），切换文档不影响其他文档。
 
+use std::collections::HashSet;
+
 use tauri::State;
 
+use crate::clipboard::{self, ClipboardInfo};
 use crate::db::{exec, queries, runs};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::history;
-use crate::model::{Affected, CreateResult, Node, NodeStatus};
+use crate::model::{Affected, CreateResult, Node, NodeStatus, PasteResult};
 use crate::propagate;
 use crate::AppState;
 
@@ -279,4 +282,93 @@ pub fn redo(state: State<'_, AppState>) -> AppResult<Option<Affected>> {
     let patch = history::redo(&tx, &mut history)?;
     tx.commit()?;
     Ok(patch)
+}
+
+// ───────────────────── 节点复制 / 粘贴（文档内 + 跨文档）─────────────────────
+// 剪贴板是 Rust 侧内存快照：切换文档只清撤销历史，不清剪贴板（docs/03 §4）。
+// 粘贴保留源节点完成状态（I4 例外），状态传播与历史记录都在同一事务内完成。
+
+/// 复制：把选中节点及其完整子树（含结构与顺序）存入应用内剪贴板。
+///
+/// 只读操作，不进撤销历史；顺带把缩进纯文本写进系统剪贴板，方便粘到别的应用，
+/// 但系统剪贴板写入失败不影响应用内复制（后者才是粘贴的数据源）。
+#[tauri::command]
+pub fn copy_nodes(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<ClipboardInfo> {
+    let doc = state.current.lock().expect("current doc mutex poisoned");
+    let index = state.docs.load_index()?;
+    let doc_name = index
+        .documents
+        .iter()
+        .find(|d| d.id == doc.id)
+        .map(|d| d.name.clone())
+        .unwrap_or_default();
+    let clip = clipboard::capture(&doc.db.conn, &ids, &doc.id, &doc_name)?;
+    let info = clip.info.clone();
+    if let Err(err) = crate::commands::agent::write_clipboard_text(&clip.plain_text) {
+        eprintln!("写系统剪贴板失败: {err}");
+    }
+    *state.clipboard.lock().expect("clipboard mutex poisoned") = Some(clip);
+    Ok(info)
+}
+
+/// 当前剪贴板摘要（无内容时返回 null）：前端据此决定「粘贴」菜单项是否可用。
+#[tauri::command]
+pub fn clipboard_info(state: State<'_, AppState>) -> AppResult<Option<ClipboardInfo>> {
+    let guard = state.clipboard.lock().expect("clipboard mutex poisoned");
+    Ok(guard.as_ref().map(|c| c.info.clone()))
+}
+
+/// 粘贴：把剪贴板里的所有顶层节点挂为 `parent_id` 的子节点，子孙按原结构整棵重建。
+///
+/// - 单根模型：绝不会产生第二个根；
+/// - 新节点继承源节点的 `status` / `completed_at`（I4 例外）；子树内部原本满足 I2，
+///   目标节点与祖先链由 `propagate_upward` 重算：全 done 子树保持父 done，
+///   含 pending 子树则让已完成的父回退 pending（CC9）；
+/// - 执行态不复制；目标节点折叠时自动展开，保证结果立即可见；
+/// - 整次粘贴是一次历史记录，撤销时删除全部新节点并恢复祖先状态。
+#[tauri::command]
+pub fn paste_nodes(state: State<'_, AppState>, parent_id: String) -> AppResult<PasteResult> {
+    let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let clip = state
+        .clipboard
+        .lock()
+        .expect("clipboard mutex poisoned")
+        .clone()
+        .ok_or_else(|| AppError::BadRequest("剪贴板为空，请先复制节点".into()))?;
+    if clip.nodes.is_empty() {
+        return Err(AppError::BadRequest("剪贴板为空，请先复制节点".into()));
+    }
+
+    let tx = doc.db.conn.transaction()?;
+    let _ = queries::get_node(&tx, &parent_id)?; // 目标必须存在
+    let before = queries::ancestors(&tx, Some(&parent_id))?;
+    let base_position = queries::next_position(&tx, Some(&parent_id))?;
+    let ts = now();
+    let (new_nodes, new_ids) = clipboard::materialize(&clip, &parent_id, base_position, &ts);
+
+    let mut history = state.history.lock().expect("history mutex poisoned");
+    let affected = history::run_with_history(&tx, before, &mut history, |tx| {
+        for node in &new_nodes {
+            queries::insert_node(tx, node)?;
+        }
+        queries::set_collapsed(tx, &parent_id, false, &ts)?;
+        let mut upserted = new_nodes.clone();
+        upserted.push(queries::get_node(tx, &parent_id)?);
+        upserted.append(&mut propagate::propagate_upward(tx, Some(&parent_id))?);
+        // 同一节点可能被传播再次写入：逆序去重，保留最新的一份快照。
+        let mut seen = HashSet::new();
+        let mut dedup = Vec::with_capacity(upserted.len());
+        for node in upserted.into_iter().rev() {
+            if seen.insert(node.id.clone()) {
+                dedup.push(node);
+            }
+        }
+        dedup.reverse();
+        Ok(Affected {
+            upserted: dedup,
+            removed: Vec::new(),
+        })
+    })?;
+    tx.commit()?;
+    Ok(PasteResult { new_ids, affected })
 }

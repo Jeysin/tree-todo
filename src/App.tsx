@@ -23,16 +23,18 @@ function App() {
   const loadTree = useTodoStore(s => s.loadTree);
   const loadDocuments = useTodoStore(s => s.loadDocuments);
   const loadTrash = useTodoStore(s => s.loadTrash);
+  const refreshClipboard = useTodoStore(s => s.refreshClipboard);
   const setViewMode = useTodoStore(s => s.setViewMode);
   const undo = useTodoStore(s => s.undo);
   const redo = useTodoStore(s => s.redo);
 
-  // 启动：文档列表 + 当前文档数据 + 回收站徽标
+  // 启动：文档列表 + 当前文档数据 + 回收站徽标 + 剪贴板可用态
   useEffect(() => {
     void loadDocuments();
     void loadTree();
     void loadTrash();
-  }, [loadDocuments, loadTree, loadTrash]);
+    void refreshClipboard();
+  }, [loadDocuments, loadTree, loadTrash, refreshClipboard]);
 
   // 运行事件监听（只注册一次；run:status 由 MCP 回执 / 验收 / 收口推送）
   useEffect(() => {
@@ -106,6 +108,43 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [setViewMode, undo, redo]);
+
+  // 节点复制 / 粘贴：capture 阶段接管 Cmd/Ctrl+C/V。
+  // Mind Elixir 自带 clipboard 事件（把节点序列化进系统剪贴板并本地 copyNodes 插入），
+  // 会在 Rust 之外产生第二份数据；这里在 keydown 阶段就截断，只走 Rust 剪贴板。
+  // 输入框 / contenteditable 放行原生复制粘贴；Shift+C/R 属于「复制 Prompt」，不拦截。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'c' && key !== 'v') return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable === true
+      ) {
+        return;
+      }
+      const st = useTodoStore.getState();
+      if (st.viewMode !== 'tree') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (key === 'c') {
+        const ids =
+          st.selectedIds.length > 0 ? st.selectedIds : st.selectedId ? [st.selectedId] : [];
+        void st.copyNodes(ids);
+      } else {
+        if (!st.selectedId) {
+          st.showToast('请先选中要粘贴到的节点');
+          return;
+        }
+        void st.pasteNodes(st.selectedId);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   if (!loaded) {
     return (

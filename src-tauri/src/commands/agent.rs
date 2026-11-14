@@ -478,19 +478,23 @@ pub fn open_path(path: String) -> AppResult<()> {
     Ok(())
 }
 
-/// 写系统剪贴板。
+/// 写系统剪贴板（纯文本）。复制 Prompt 与复制节点都复用它。
 ///
 /// 为什么不走前端 `navigator.clipboard`：WebView2 里它依赖 secure context 与权限，
 /// 实测会静默失败（用户点「复制 Prompt」剪贴板是空的）。统一走原生实现，前端仅兜底。
+pub(crate) fn write_clipboard_text(text: &str) -> AppResult<()> {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.set_text(text.to_string()))
+        .map_err(|e| AppError::BadRequest(format!("写入剪贴板失败: {e}")))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn copy_text(text: String) -> AppResult<()> {
     if text.is_empty() {
         return Err(AppError::BadRequest("没有可复制的内容".into()));
     }
-    arboard::Clipboard::new()
-        .and_then(|mut c| c.set_text(text))
-        .map_err(|e| AppError::BadRequest(format!("写入剪贴板失败: {e}")))?;
-    Ok(())
+    write_clipboard_text(&text)
 }
 
 // ── MCP 集成（设置页，docs/06 v2 §4.4 / §9.3）──

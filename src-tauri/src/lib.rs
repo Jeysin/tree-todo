@@ -4,6 +4,7 @@ use tauri::menu::{IsMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, 
 use tauri::{Emitter, Manager};
 
 mod agents;
+mod clipboard;
 mod commands;
 mod db;
 mod error;
@@ -97,12 +98,15 @@ pub struct CurrentDoc {
     pub db: Db,
 }
 
-/// 全局状态：当前文档 + 撤销历史 + 多文档仓库。
+/// 全局状态：当前文档 + 撤销历史 + 多文档仓库 + 节点剪贴板。
 /// 领域红线（AGENTS.md）：所有数据变更必须经此数据层，状态传播只在这里发生。
 pub struct AppState {
     pub current: Mutex<CurrentDoc>,
     pub history: Mutex<History>,
     pub docs: DocStore,
+    /// 应用内节点剪贴板（结构化子树快照）。切换文档时**不清空**，以支持跨文档粘贴；
+    /// 进程退出即失效，属于内存态，不落库。
+    pub clipboard: Mutex<Option<clipboard::Clipboard>>,
     /// 本地回执服务 + 运行映射（docs/06 §6.3）。
     pub runtime: Arc<runtime::RuntimeState>,
 }
@@ -165,6 +169,7 @@ pub fn run() {
                 }),
                 history: Mutex::new(History::new()),
                 docs,
+                clipboard: Mutex::new(None),
                 runtime,
             });
 
@@ -193,6 +198,9 @@ pub fn run() {
             commands::collapse_all,
             commands::undo,
             commands::redo,
+            commands::copy_nodes,
+            commands::paste_nodes,
+            commands::clipboard_info,
             commands::list_trash,
             commands::restore_trash,
             commands::purge_trash,
