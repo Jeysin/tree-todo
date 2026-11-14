@@ -4,7 +4,7 @@
 
 ## 项目是什么
 
-**tree-todo**：跨平台（Windows / macOS）树形待办桌面应用。待办事项像脑图一样无限分叉，每个节点带「pending / done」状态并沿树自动传播；提供树形（脑图）与平铺双视图。
+**tree-todo**：跨平台（Windows / macOS / Linux）树形待办桌面应用。待办事项像脑图一样无限分叉，每个节点带「pending / done」状态并沿树自动传播；提供树形（脑图）与平铺双视图。
 
 **核心心智模型：叶子是任务，父节点是分类。** 只有「没有子节点的叶子节点」才是真正的待办事项；父节点只是用来组织叶子节点的分类容器。树负责**组织**，平铺视图只列叶子，所有任务计数（数量 / 完成数 / 完成率 / 统计口径）**一律只数叶子**。详见红线第 10 条与 `docs/03-feature-design.md` §3.4。
 
@@ -25,7 +25,7 @@
 ```bash
 pnpm install          # 安装前端依赖
 pnpm tauri dev        # 开发模式（热更新）
-pnpm tauri build      # 打包（Win 下出 .msi/.exe，macOS 出 .dmg/.app）
+pnpm tauri build      # 打包（Win 出 .exe，macOS 出 .dmg/.app，Linux 出 .deb/.rpm/.AppImage）
 cargo test            # Rust 单测（传播引擎测试必须全绿）
 cargo clippy --all-targets -- -D warnings   # lint，零警告合入标准
 pnpm build            # 仅构建前端（类型检查一并执行）
@@ -95,7 +95,7 @@ docs/           # 技术文档
 | 架构 / 选型 | `docs/01-overview.md` |
 | 新功能 / 交互变更 | `docs/03-feature-design.md`、`docs/04-ui-ux-design.md` |
 | 里程碑调整 | `docs/05-roadmap.md` |
-| 发布渠道 / CI 流水线 | `docs/09-gitee-release.md` |
+| 发布渠道 / CI 流水线 | `docs/09-gitee-release.md`、`docs/11-linux-release.md` |
 | 修改 README 内容 | `README.md`（英文，仓库默认展示）与 `README.zh-CN.md`（中文）必须同步修改：章节结构、截图、链接及顶部 / 底部语言切换条保持一致 |
 
 文档与代码不一致时，以文档描述的领域规则为准，改代码；文档本身错了才改文档（并在 PR 中说明理由）。

@@ -2,9 +2,10 @@
  * 把 GitHub Release 的安装包镜像到 Gitee Release。
  *
  * 为什么是「镜像」而不是「在 Gitee 上构建」：
- *   本项目要产出 .dmg / .app.tar.gz（macOS）与 -setup.exe（NSIS，Windows），
- *   Tauri 打包只能在对应原生系统上完成；Gitee Go 只提供 Linux/Windows 构建机
- *   （无 macOS），额度 200 构建分钟/仓库/月，也远不够一次双平台打包。
+ *   本项目要产出 .dmg / .app.tar.gz（macOS）、-setup.exe（NSIS，Windows）与
+ *   .deb / .rpm / .AppImage（Linux），Tauri 打包只能在对应原生系统上完成；
+ *   Gitee Go 只提供 Linux/Windows 构建机（无 macOS），
+ *   额度 200 构建分钟/仓库/月，也远不够一次三平台打包。
  *   所以安装包由 GitHub Actions 构建，本脚本负责把产物搬到 Gitee Release。
  *   方案与限制见 docs/09-gitee-release.md。
  *
@@ -17,8 +18,9 @@
  *   --tag <vX.Y.Z>       必填（也可用 TAG / GITHUB_REF_NAME）
  *   --assets-dir <dir>   用本地已有产物，跳过从 GitHub 下载
  *   --overwrite          同名附件已存在时删除 release 后重建并全量重传
- *   --require-complete   校验 6 类产物齐全（dmg / app.tar.gz + 两个 sig / exe / latest.json），
- *                        缺任何一类直接失败；release.yml 自动镜像时会带上
+ *   --require-complete   校验 10 类产物齐全（dmg、app.tar.gz、exe、deb、rpm、
+ *                        AppImage、三个 .sig、latest.json），缺任何一类直接失败；
+ *                        release.yml 自动镜像时会带上
  *   --prerelease         在 Gitee 上标记为预发布
  *   --dry-run            只打印计划，不发写请求
  *   --repo <owner/repo>  Gitee 仓库，默认 GITEE_REPO 或 Jeysin/tree-todo
@@ -42,7 +44,16 @@ const GITEE_MAX_ASSET_BYTES = 100 * 1024 * 1024;
 const UPLOAD_ATTEMPTS = 5;
 
 /** 需要镜像的产物：安装包本体、更新包、签名、更新清单。 */
-const ASSET_PATTERNS = [/\.dmg$/i, /-setup\.exe$/i, /\.app\.tar\.gz$/i, /\.sig$/i, /^latest\.json$/i];
+const ASSET_PATTERNS = [
+  /\.dmg$/i,
+  /-setup\.exe$/i,
+  /\.app\.tar\.gz$/i,
+  /\.deb$/i,
+  /\.rpm$/i,
+  /\.AppImage$/i,
+  /\.sig$/i,
+  /^latest\.json$/i,
+];
 
 /**
  * 一次完整发布必须凑齐的产物组。用 --require-complete 开启：
@@ -55,6 +66,10 @@ const REQUIRED_GROUPS = [
   { label: 'macOS 更新包签名 (.app.tar.gz.sig)', match: /\.app\.tar\.gz\.sig$/i },
   { label: 'Windows 安装包 (-setup.exe)', match: /-setup\.exe$/i },
   { label: 'Windows 安装包签名 (-setup.exe.sig)', match: /-setup\.exe\.sig$/i },
+  { label: 'Linux 安装包 (.deb)', match: /\.deb$/i },
+  { label: 'Linux 安装包 (.rpm)', match: /\.rpm$/i },
+  { label: 'Linux 便携包 (.AppImage)', match: /\.AppImage$/i },
+  { label: 'Linux 便携包签名 (.AppImage.sig)', match: /\.AppImage\.sig$/i },
   { label: '更新清单 (latest.json)', match: /^latest\.json$/i },
 ];
 
@@ -335,6 +350,18 @@ async function main() {
         fail(
           `产物不完整（--require-complete）：缺 ${missing.map(group => group.label).join('、')}\n` +
             `  实际拿到：${files.map(file => file.name).join(', ') || '（无）'}`,
+        );
+      }
+      // 必需产物超限时不能只打一行日志：那样 release 会“成功”，但 Gitee 上缺附件。
+      const oversized = files.filter(
+        file =>
+          file.size > GITEE_MAX_ASSET_BYTES &&
+          REQUIRED_GROUPS.some(group => group.match.test(file.name)),
+      );
+      if (oversized.length > 0) {
+        fail(
+          `必需产物超过 Gitee 单附件 100MB 上限：` +
+            oversized.map(file => `${file.name}（${humanSize(file.size)}）`).join('、'),
         );
       }
       log(`产物齐全校验通过：${REQUIRED_GROUPS.length} 类产物全部就位`);

@@ -8,12 +8,12 @@
 
   <p>
     Unlimited nesting · Automatic status propagation · Tree &amp; flat views · <b>AI Agent collaboration</b> · Local-first<br />
-    A Windows / macOS desktop app (Tauri 2 + Rust + React)
+    A Windows / macOS / Linux desktop app (Tauri 2 + Rust + React)
   </p>
 
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey" alt="Platform" />
+    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform" />
     <img src="https://img.shields.io/badge/Tauri-2-24C8DB" alt="Tauri 2" />
     <a href="https://github.com/Jeysin/tree-todo/releases/latest"><img src="https://img.shields.io/github/v/release/Jeysin/tree-todo?display_name=tag&sort=semver" alt="release" /></a>
   </p>
@@ -166,7 +166,7 @@ Follow system / Light / Dark — switch at any time.
 
 - Checks GitHub Releases on startup; a dialog shows the version number and release notes when an update is available
 - You can also click the version number in the top-left corner, or use the system menu "Check for Updates…"; if there's nothing new it says "You're up to date"
-- Windows downloads, installs and restarts in-app; macOS opens the Releases download page (not yet signed / notarized)
+- Windows downloads, installs and restarts in-app; macOS and Linux open the Releases download page (macOS is not yet signed / notarized; Linux `.deb` / `.rpm` cannot be replaced in place)
 - Updates only replace the binary — documents, folders, Trash and run records are untouched
 
 ### 14. Copy & paste nodes: take the whole subtree with you
@@ -307,14 +307,21 @@ Grab the installer for your platform from [Releases](https://github.com/Jeysin/t
 
 | Platform | File |
 | --- | --- |
-| macOS (Universal, Apple Silicon + Intel) | `Tree Todo_2.0.0_universal.dmg` |
-| Windows (x64) | `Tree Todo_2.0.0_x64-setup.exe` |
+| macOS (Universal, Apple Silicon + Intel) | `Tree Todo_<version>_universal.dmg` |
+| Windows (x64) | `Tree Todo_<version>_x64-setup.exe` |
+| Ubuntu / Debian (x64) | `*.deb` |
+| Fedora / RHEL (x64) | `*.rpm` |
+| Linux portable (x64) | `*.AppImage` |
 
+> Linux packages are available from v2.1.0. Install the `.deb` with `sudo apt install ./<file>.deb`, the `.rpm` with `sudo dnf install ./<file>.rpm`,
+> or make the AppImage executable and run it (`chmod +x <file>.AppImage && ./<file>.AppImage`).
+> On Ubuntu 24.04, AppImage needs `libfuse2t64` (or run it with `--appimage-extract-and-run`); the `.deb` is the recommended option.
+>
 > The installers are not yet code-signed or notarized: on macOS, right-click → "Open" the first time, or allow it in "System Settings → Privacy & Security";
 > on Windows, if SmartScreen warns, click "More info → Run anyway".
 >
 > Once installed you never need to hunt for new versions: the app checks on startup, and you can also click the version number in the top-left or use the menu "Check for Updates…".
-> Windows supports in-app download, install and restart; macOS currently opens the Releases download page.
+> Windows supports in-app download, install and restart; macOS and Linux open the Releases download page.
 >
 > Users on 1.0.0 need to install 2.0.0 manually once (the old version has no updater); auto-upgrade starts from 2.0.0.
 
@@ -329,6 +336,15 @@ Grab the installer for your platform from [Releases](https://github.com/Jeysin/t
 | Rust | stable (edition 2024 support, ≥ 1.85) | Backend and bundling |
 | macOS | Xcode Command Line Tools | `xcode-select --install` |
 | Windows | MSVC Build Tools + WebView2 Runtime | Win11 ships WebView2; Win10 needs a separate install |
+| Linux | Ubuntu 22.04+ / Debian 12+ | WebKitGTK 4.1 dev packages, `patchelf`, `rpm`, `libfuse2` |
+
+On Ubuntu 22.04+ (the release baseline), install the build dependencies with:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+  patchelf rpm libfuse2
+```
 
 #### Build and run
 
@@ -350,6 +366,7 @@ Artifacts land in `src-tauri/target/release/bundle/`:
 
 - **macOS**: `macos/Tree Todo.app`, `dmg/Tree Todo_<version>_<arch>.dmg`
 - **Windows**: `nsis/Tree Todo_<version>_x64-setup.exe`
+- **Linux**: `deb/*.deb`, `rpm/*.rpm`, `appimage/*.AppImage` (`appimage/*.AppImage.sig` is the updater signature)
 
 The first build takes 3–10 minutes (all Rust dependencies from scratch); incremental builds afterwards take seconds.
 
@@ -359,6 +376,7 @@ The first build takes 3–10 minutes (all Rust dependencies from scratch); incre
 | --- | --- |
 | macOS | `~/Library/Application Support/com.jeysin.treetodo/` |
 | Windows | `%APPDATA%\com.jeysin.treetodo\` |
+| Linux | `~/.local/share/com.jeysin.treetodo/` |
 
 Inside: `documents.json` is the document index, `docs/<id>.db` holds each document's data, `trash/` is the Trash,
 `mcp.json` stores the MCP service's port and token, and `global.db` holds the rebuildable aggregate behind the
@@ -366,7 +384,7 @@ calendar heatmap.
 
 ## Keyboard shortcuts
 
-Use `⌘` on macOS and `Ctrl` on Windows.
+Use `⌘` on macOS and `Ctrl` on Windows and Linux.
 
 | Action | Key | Action | Key |
 | --- | --- | --- | --- |

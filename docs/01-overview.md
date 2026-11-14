@@ -45,7 +45,7 @@ tree-todo 的回答就是「树形待办」：
 1. **资源占用是效率工具的命门**。目标用户是重度效率工具用户，对「一个待办软件吃掉几百 MB 内存、安装包上百 MB」零容忍。Tauri 用系统 WebView + Rust 后端，体积与内存占用比 Electron 低一个数量级。
 2. **脑图渲染的全部生态在 Web 端**（Mind Elixir 等），Tauri 前端层可 100% 复用 Web 生态，渲染与交互能力不受限。
 3. **Rust 数据层保证状态一致性**。状态自动传播（级联 / 回退）是本项目最核心的领域逻辑，放在 Rust 层可以用类型系统 + 事务保证正确性，且万级节点下性能无忧。
-4. Tauri 2 的 Windows / macOS 支持已充分成熟，无平台风险。
+4. Tauri 2 的 Windows / macOS / Linux 支持已充分成熟，无平台风险；Linux 以 Ubuntu 22.04（WebKitGTK 4.1 / glibc 2.35）为打包基线，见 `docs/11-linux-release.md`。
 
 > 若后续发现 Tauri 生态短板（如特殊系统 API），Tauri 也支持 Node.js sidecar 逃生舱；前端代码理论上可低成本迁移到 Electron，技术风险可控。
 

@@ -13,7 +13,7 @@
 | 问题 | 结论 |
 |---|---|
 | 用 Gitee 的 CI 构建安装包？ | **不行**，见 §1 |
-| 安装包谁构建？ | GitHub Actions（`release.yml`），双平台原生 runner |
+| 安装包谁构建？ | GitHub Actions（`release.yml`），三平台原生 runner |
 | Gitee 侧做什么？ | 代码镜像 + **Release 产物镜像**（`scripts/gitee-release.mjs`） |
 | 什么时候镜像？ | 打 tag 后自动（`publish-gitee` job）；也可手动跑 `Mirror release to Gitee` |
 | 下载页 | `https://gitee.com/Jeysin/tree-todo/releases` |
@@ -30,7 +30,7 @@ Gitee 的 CI 是 **Gitee Go**（`.workflow/*.yml` 的流水线式 YAML，插件�
 | 约束 | 事实 | 影响 |
 |---|---|---|
 | 没有 macOS 构建机 | Gitee Go 提供 Linux / Windows 构建机，macOS 不在常规套餐内 | `.dmg` / `.app.tar.gz` 只能在 macOS 上打 |
-| 额度不够 | 单仓库 200 构建分钟/月（企业版 1000） | 一次双平台 Tauri 打包 ≈ 25–40 分钟，重跑翻倍 |
+| 额度不够 | 单仓库 200 构建分钟/月（企业版 1000） | 一次三平台 Tauri 打包 ≈ 40–60 分钟，重跑翻倍 |
 | 没有 tauri-action | GitHub 侧一条 action 完成打包 + 建 Release + 传资产 + 回填签名 | Gitee Go 需自己写 shell 拼整套流程 |
 
 因此采用既定退路：**GitHub 构建 → 自动拉回产物 → 上传 Gitee Release**，无需人工搬运。
@@ -45,11 +45,12 @@ Gitee 的 CI 是 **Gitee Go**（`.workflow/*.yml` 的流水线式 YAML，插件�
 ```
 git tag v2.1.0 && git push origin v2.1.0
         │
-        ├─ build（macos-latest / windows-latest）→ Release 附件 .dmg / .app.tar.gz / -setup.exe / *.sig
-        ├─ publish-manifest → latest.json（darwin 双键同指 universal 包）
+        ├─ build（macos-latest / windows-latest / ubuntu-22.04）→ Release 附件
+        │    .dmg / .app.tar.gz / -setup.exe / .deb / .rpm / .AppImage / *.sig
+        ├─ publish-manifest → latest.json（darwin 双键同指 universal 包，另含 linux-x86_64）
         └─ publish-gitee → node scripts/gitee-release.mjs --tag v2.1.0
               ├─ 正文取 release-notes/v2.1.0.md
-              ├─ 从 GitHub 下载 6 个产物（API asset 端点，带大小校验）
+              ├─ 从 GitHub 下载 10 个产物（API asset 端点，带大小校验）
               ├─ Gitee 建/更新 release（tag 不存在时按 target_commitish 建）
               └─ 逐个 attach_files 上传（同名已存在则跳过）
 ```
@@ -59,7 +60,10 @@ git tag v2.1.0 && git push origin v2.1.0
 | `Tree.Todo_<ver>_universal.dmg` | macOS 安装包 | ✅ |
 | `Tree.Todo_<ver>_x64-setup.exe` | Windows 安装包（NSIS） | ✅ |
 | `Tree.Todo_<ver>_universal.app.tar.gz` | macOS 应用内更新包 | ✅ |
-| `*.sig` | 更新包签名（Ed25519） | ✅ |
+| `*.deb` | Linux（Ubuntu / Debian）安装包 | ✅ |
+| `*.rpm` | Linux（Fedora / RHEL）安装包 | ✅ |
+| `*.AppImage` | Linux 便携版，同时是 Linux updater 载体 | ✅ |
+| `*.sig` | 更新包签名（Ed25519，含 `.AppImage.sig`） | ✅ |
 | `latest.json` | 更新清单 | ✅（其中 URL 仍指向 GitHub，见 §6） |
 
 ### 2.1 执行时机（为什么不会抢跑）
@@ -68,13 +72,13 @@ git tag v2.1.0 && git push origin v2.1.0
 
 | 机制 | 效果 |
 |---|---|
-| `needs: build`（matrix job） | 等 macOS + Windows **所有矩阵腿**全部成功才继续 |
-| `tauri-action` 在 `build` 内部完成上传 | `build` 变绿 ⇒ `.dmg` / `-setup.exe` / `.app.tar.gz` / `*.sig` 已经在 Release 里 |
+| `needs: build`（matrix job） | 等 macOS + Windows + Linux **所有矩阵腿**全部成功才继续 |
+| `tauri-action` 在 `build` 内部完成上传 | `build` 变绿 ⇒ `.dmg` / `-setup.exe` / `.app.tar.gz` / `.deb` / `.rpm` / `.AppImage` / `*.sig` 已经在 Release 里 |
 | `needs: publish-manifest` | 该 job 最后一步才上传 `latest.json`，等它 ⇒ 清单也已就位 |
 | 上游任一 job 失败 | `publish-gitee` 直接 skipped（默认 `needs` 语义），不会传半套产物 |
 
 即便如此，“等到了”不等于“凑齐了”（例如签名密钥没配导致 `.sig` 缺失），所以 CI 里调用时带
-`--require-complete`：6 类产物缺任何一类就失败，且**在创建 release 之前**就失败，不会在 Gitee 上留残缺版本。
+`--require-complete`：10 类产物缺任何一类就失败（含 `.deb` / `.rpm` / `.AppImage` / `.AppImage.sig`），且**在创建 release 之前**就失败，不会在 Gitee 上留残缺版本。
 
 ---
 
@@ -131,7 +135,7 @@ pnpm release:gitee --tag v2.0.0                  # 从 GitHub 下载后上传
 pnpm release:gitee --tag v2.0.0 --dry-run        # 只打印计划
 pnpm release:gitee --tag v2.0.0 --assets-dir ./release-assets   # 用本地已有产物
 pnpm release:gitee --tag v2.0.0 --overwrite      # 删 release 重建后全量重传
-pnpm release:gitee --tag v2.0.0 --require-complete   # 先校验 6 类产物齐全再传
+pnpm release:gitee --tag v2.0.0 --require-complete   # 先校验 10 类产物齐全再传
 ```
 
 退出码：`0` 成功，`1` 接口/参数错误，`2` 缺 `GITEE_TOKEN`。
@@ -146,7 +150,7 @@ curl -s "https://gitee.com/api/v5/repos/Jeysin/tree-todo/releases/tags/v2.0.0" \
   | python3 -c "import json,sys; [print(a['name']) for a in json.load(sys.stdin)['assets']]"
 ```
 
-应看到 6 个附件（Gitee 另附 `vX.Y.Z.zip` / `.tar.gz` 源码包，属正常）。
+应看到 10 个附件（Gitee 另附 `vX.Y.Z.zip` / `.tar.gz` 源码包，属正常）。
 下载地址形如 `https://gitee.com/Jeysin/tree-todo/releases/download/v2.0.0/<文件名>`，公开仓库匿名可下。
 
 ---
@@ -155,7 +159,7 @@ curl -s "https://gitee.com/api/v5/repos/Jeysin/tree-todo/releases/tags/v2.0.0" \
 
 | 限制 | 影响 | 应对 |
 |---|---|---|
-| 单附件 100MB 上限 | 超出的文件被跳过 | 脚本明确告警；当前最大 8.4MB |
+| 单附件 100MB 上限 | 超出的文件被跳过 | AppImage 约 70MB，仍在限内；`--require-complete` 下必需产物超限会直接失败，避免 Gitee 上缺附件 |
 | 附件无法原地替换（API 不返回附件 id） | 同名文件只能跳过或整体重建 | `--overwrite` 走「删 release → 重建 → 全量重传」 |
 | release 正文取 `release-notes/<tag>.md` | 缺失时回退 GitHub 正文 | 发版清单保留该步骤 |
 | 大文件上传偶发 `EPIPE` | 单次上传可能断 | 脚本 5 次重试 + `curl` 兜底 |

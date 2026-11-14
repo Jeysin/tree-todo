@@ -7,12 +7,12 @@
 
   <p>
     无限层级拆解 · 状态自动传播 · 树形 / 平铺双视图 · <b>AI Agent 协同</b> · 本地优先<br />
-    Windows / macOS 桌面应用（Tauri 2 + Rust + React）
+    Windows / macOS / Linux 桌面应用（Tauri 2 + Rust + React）
   </p>
 
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey" alt="Platform" />
+    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform" />
     <img src="https://img.shields.io/badge/Tauri-2-24C8DB" alt="Tauri 2" />
     <a href="https://github.com/Jeysin/tree-todo/releases/latest"><img src="https://img.shields.io/github/v/release/Jeysin/tree-todo?display_name=tag&sort=semver" alt="release" /></a>
   </p>
@@ -165,7 +165,7 @@ Tree Todo 把这两件事合成一个动作：
 
 - 启动时自动检查 GitHub Releases；有新版本弹窗展示版本号与更新说明
 - 也可以点左上角版本号，或系统菜单「检查更新…」手动检查；没有新版本会提示「已是最新版本」
-- Windows 可直接在应用内下载安装并重启；macOS 会打开 Releases 下载页（暂未签名公证）
+- Windows 可直接在应用内下载安装并重启；macOS 与 Linux 会打开 Releases 下载页（macOS 暂未签名公证；Linux 的 `.deb` / `.rpm` 无法原地替换）
 - 更新只替换程序，文档、目录、回收站与执行记录都不动
 
 ### 14. 复制 / 粘贴节点：整棵子树一起搬
@@ -306,14 +306,21 @@ Prompt 里的「约束」段可以在设置页改（每行一条），默认是�
 
 | 平台 | 文件 |
 | --- | --- |
-| macOS（Universal，Apple Silicon + Intel） | `Tree Todo_2.0.0_universal.dmg` |
-| Windows（x64） | `Tree Todo_2.0.0_x64-setup.exe` |
+| macOS（Universal，Apple Silicon + Intel） | `Tree Todo_<version>_universal.dmg` |
+| Windows（x64） | `Tree Todo_<version>_x64-setup.exe` |
+| Ubuntu / Debian（x64） | `*.deb` |
+| Fedora / RHEL（x64） | `*.rpm` |
+| Linux 便携版（x64） | `*.AppImage` |
 
+> Linux 安装包从 v2.1.0 起提供。`.deb` 用 `sudo apt install ./<文件名>.deb` 安装，
+> `.rpm` 用 `sudo dnf install ./<文件名>.rpm`；AppImage 先 `chmod +x <文件名>.AppImage` 再运行。
+> Ubuntu 24.04 默认不带 FUSE2，AppImage 需先装 `libfuse2t64`（或加 `--appimage-extract-and-run` 运行）；推荐优先用 `.deb`。
+>
 > 安装包尚未做代码签名与公证：macOS 首次打开请右键「打开」，或到「系统设置 → 隐私与安全性」中允许；
 > Windows 若提示 SmartScreen，点「更多信息 → 仍要运行」。
 >
 > 安装后无需再手动找新版本：应用启动时自动检查，也可点左上角版本号或菜单「检查更新…」。
-> Windows 支持应用内下载安装并重启；macOS 暂跳转 Releases 下载页。
+> Windows 支持应用内下载安装并重启；macOS 与 Linux 跳转 Releases 下载页。
 >
 > 1.0.0 用户需手动安装一次 2.0.0（旧版本不含更新能力）；从 2.0.0 起才能自动升级。
 
@@ -328,6 +335,15 @@ Prompt 里的「约束」段可以在设置页改（每行一条），默认是�
 | Rust | stable（支持 edition 2024，≥ 1.85） | 后端与打包 |
 | macOS | Xcode Command Line Tools | `xcode-select --install` |
 | Windows | MSVC 生成工具 + WebView2 Runtime | Win11 自带 WebView2，Win10 需单独安装 |
+| Linux | Ubuntu 22.04+ / Debian 12+ | WebKitGTK 4.1 开发包、`patchelf`、`rpm`、`libfuse2` |
+
+Ubuntu 22.04+（发布基线）先安装构建依赖：
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+  patchelf rpm libfuse2
+```
 
 #### 构建与运行
 
@@ -349,6 +365,7 @@ pnpm tauri build    # 打包当前平台的安装包
 
 - **macOS**：`macos/Tree Todo.app`、`dmg/Tree Todo_<version>_<arch>.dmg`
 - **Windows**：`nsis/Tree Todo_<version>_x64-setup.exe`
+- **Linux**：`deb/*.deb`、`rpm/*.rpm`、`appimage/*.AppImage`（`appimage/*.AppImage.sig` 为更新签名）
 
 首次编译需要 3–10 分钟（Rust 依赖全量构建），之后增量编译只要几秒。
 
@@ -358,13 +375,14 @@ pnpm tauri build    # 打包当前平台的安装包
 | --- | --- |
 | macOS | `~/Library/Application Support/com.jeysin.treetodo/` |
 | Windows | `%APPDATA%\com.jeysin.treetodo\` |
+| Linux | `~/.local/share/com.jeysin.treetodo/` |
 
 目录里 `documents.json` 是文档索引，`docs/<id>.db` 是每个文档的数据，`trash/` 是回收站，
 `mcp.json` 是 MCP 服务的端口与 token，`global.db` 是可随时重建的全局统计（热力图）聚合。
 
 ## 快捷键
 
-macOS 用 `⌘`，Windows 用 `Ctrl`。
+macOS 用 `⌘`，Windows 与 Linux 用 `Ctrl`。
 
 | 操作 | 键位 | 操作 | 键位 |
 | --- | --- | --- | --- |

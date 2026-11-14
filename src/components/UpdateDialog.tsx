@@ -1,9 +1,9 @@
-/** 更新弹窗（docs/08 §6.3）：版本号 + 版本介绍 + 下载进度 / macOS 下载页降级。 */
+/** 更新弹窗（docs/08 §6.3）：版本号 + 版本介绍 + 下载进度 / macOS、Linux 下载页降级。 */
 import { useEffect } from 'react';
 import { ArrowRight, Loader2, X } from 'lucide-react';
 
 import { useRunStore } from '../stores/runStore';
-import { IS_MACOS, useUpdateStore } from '../stores/updateStore';
+import { IS_DOWNLOAD_ONLY, IS_MACOS, useUpdateStore } from '../stores/updateStore';
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -77,7 +77,7 @@ export function UpdateDialog() {
           ? '安装中…'
           : phase === 'error'
             ? '重试'
-            : IS_MACOS
+            : IS_DOWNLOAD_ONLY
               ? '前往下载'
               : '立即更新';
 
@@ -120,9 +120,11 @@ export function UpdateDialog() {
 
           <ReleaseNotes notes={info.notes || '本次更新暂无说明。'} />
 
-          {IS_MACOS ? (
+          {IS_DOWNLOAD_ONLY ? (
             <p className="text-[11px] leading-4 text-muted/80">
-              macOS 版暂不支持应用内安装，将打开 GitHub Releases 下载页；Windows 版可直接下载安装。
+              {IS_MACOS
+                ? 'macOS 版暂不支持应用内安装，将打开 GitHub Releases 下载页；Windows 版可直接下载安装。'
+                : 'Linux 版暂不支持应用内安装，将打开 GitHub Releases 下载页；请按发行版下载 .deb / .rpm 或 AppImage 手动安装。'}
             </p>
           ) : (
             runningCount > 0 && (

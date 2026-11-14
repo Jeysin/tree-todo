@@ -17,6 +17,9 @@
 - **节点复制 / 粘贴**：支持文档内与跨文档复制整棵子树（含父子结构、备注、同级顺序与完成状态），右键菜单与 `⌘/Ctrl+C`、`⌘/Ctrl+V` 双入口；粘贴为选中节点的子节点，一次粘贴记为一条撤销历史。按反馈调整为**连完成状态一起复制**（`status` + `completed_at` 原样保留，I4 的唯一例外），目标父按 I2 重算并自动展开，Agent 执行态不复制；规则见 `docs/02-data-model.md` §2.6。
 - **Gitee 发布渠道**：打 tag 后自动把 GitHub Release 的安装包镜像到 Gitee Release（`publish-gitee` job），也可用 `Mirror release to Gitee` 手动补传。两端产物同源、同一套 Ed25519 签名。用法与限制见 `docs/09-gitee-release.md`。
 - 新增 `pnpm release:gitee --tag vX.Y.Z`：本地一条命令完成「下载 GitHub 产物 → 建 Gitee Release → 传附件」，幂等可重跑。
+- **Linux 安装包**（v2.1.0）：发布矩阵新增 Ubuntu 22.04 构建腿，GitHub Release 同时提供 `.deb` / `.rpm` / `.AppImage`（含 Linux updater 签名 `.AppImage.sig`）；Gitee 镜像与 `--require-complete` 校验扩展到 10 类产物。
+  - 兼容基线 Ubuntu 22.04+ / Debian 12+（glibc 2.35、WebKitGTK 4.1）；不在 24.04 上构建，避免抬高最低 glibc 版本。
+  - Linux 自动更新统一降级为「前往下载」：`.deb` / `.rpm` 无法原地替换，AppImage 也不做应用内安装；详见 `docs/11-linux-release.md`。
 
 ### 修复
 

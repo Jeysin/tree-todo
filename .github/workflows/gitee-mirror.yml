@@ -35,7 +35,8 @@ jobs:
   mirror:
     name: Mirror ${{ inputs.tag }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Linux AppImage 体积约 70MB，补传历史版本时上传耗时更长。
+    timeout-minutes: 40
     env:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:

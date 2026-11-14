@@ -11,6 +11,8 @@
 > 四条未完成项全部不再实施）；已实测通过的资产在新链路下按「继承项」复验。
 >
 > 验收环境：Windows 11、本机安装 WorkBuddy 5.9.3、Trae CN 3.4.13。
+> 本清单只覆盖 Agent 集成链路；**安装包的跨平台验收另见**
+> `docs/11-linux-release.md` §7（Linux）与 `docs/08-auto-update.md` §12（更新链路）。
 > 验收方式：CDP（WebView2 远程调试，`TREE_TODO_CDP_PORT` 钩子 + `scripts/accept-drive.py`）
 > 驱动真实 UI —— 真实鼠标 / 键盘事件；MCP 通道用协议级请求（HTTP 直打 `POST /mcp`，
 > `scripts/mcp-accept.py`）；关键结果与 SQLite 数据库逐条比对。

@@ -1,6 +1,6 @@
 # 08 · 自动更新（技术方案）
 
-> 状态：**已确认，随 v2.0.0 实施**（代码完成，待双平台实测）
+> 状态：**已确认，随 v2.0.0 实施**（代码完成，待三平台实测）
 >
 > 目标版本：v2.0.0（2.0.0 是首个带更新能力的版本；1.0.0 已发布但不含更新能力）
 >
@@ -55,7 +55,7 @@
 
 - 每个 Release 附带一个 `latest.json`（Tauri 静态清单格式），地址固定为 `releases/latest/download/latest.json`。
 - GitHub 的 `releases/latest` 只指向**最新正式版**（draft / prerelease 不计入），正好符合「有新版本才提示」。
-- 清单里同时列出 macOS 两个架构键与 Windows 键：
+- 清单里同时列出 macOS 两个架构键、Windows 键与 Linux 键：
 
 ```json
 {
@@ -65,15 +65,17 @@
   "platforms": {
     "darwin-aarch64": { "signature": "…", "url": "https://github.com/…/Tree.Todo.app.tar.gz" },
     "darwin-x86_64":  { "signature": "…", "url": "https://github.com/…/Tree.Todo.app.tar.gz" },
-    "windows-x86_64": { "signature": "…", "url": "https://github.com/…/Tree.Todo_2.1.0_x64-setup.exe" }
+    "windows-x86_64": { "signature": "…", "url": "https://github.com/…/Tree.Todo_2.1.0_x64-setup.exe" },
+    "linux-x86_64":   { "signature": "…", "url": "https://github.com/…/Tree.Todo_2.1.0_amd64.AppImage" }
   }
 }
 ```
 
-> ⚠️ 三个已确认的坑：
+> ⚠️ 四个已确认的坑：
 > 1. **没有 `darwin-universal` 这个键**。Tauri 只认 `OS-ARCH`（`darwin-aarch64` / `darwin-x86_64` / `windows-x86_64` …）。本项目 macOS 出的是 universal 包，必须让两个 darwin 键指向**同一个** `.app.tar.gz`，否则 Intel 机器会静默判定「无更新」。
-> 2. macOS 的更新资产是 `.app.tar.gz`，不是 `.dmg`；Windows 用 NSIS 的 `-setup.exe`。
+> 2. macOS 的更新资产是 `.app.tar.gz`，不是 `.dmg`；Windows 用 NSIS 的 `-setup.exe`；Linux 用 `.AppImage`。
 > 3. Tauri 会**先校验整份清单**再比对版本，任一平台条目签名/URL 缺失都会导致所有人检查失败。清单必须由脚本生成，不能手写。
+> 4. Linux 只写一个 `linux-x86_64` 键即可：Tauri 2.14 会先找 `linux-x86_64-{deb,rpm,appimage}`，找不到再回落到 `linux-x86_64`。三种安装形态都能收到「有新版本」，但 `.deb` / `.rpm` 不做应用内替换（见 §6.7）。
 
 ### 2.3 签名（不可关闭）
 
@@ -311,7 +313,7 @@ idle ──check()──► checking ──null──► idle            （manu
 - 版本介绍按纯文本渲染（`whitespace-pre-wrap`），`- ` 开头的行前面加圆点；**不引入 markdown 依赖**。
 - 按钮态：
   - `available`：`稍后` + `立即更新`（主按钮 accent）
-  - macOS：主按钮改为「前往下载」，点击打开 GitHub Releases 下载页，不做应用内安装
+  - macOS / Linux：主按钮改为「前往下载」，点击打开 GitHub Releases 下载页，不做应用内安装
   - `downloading`：主按钮变「下载中…」禁用，显示进度条与百分比
   - `installing`：显示「正在安装，应用即将重启…」，禁用关闭
   - `error`：显示「更新失败：{原因}」+ `重试` + `打开下载页`
@@ -366,18 +368,24 @@ listen('menu:check-update', () => void useUpdateStore.getState().check({ manual:
 - 当前版本继续用 `getVersion()`（读 `tauri.conf.json` 的 `version`），不新增 IPC。
 - `updateStore.appVersion` 在首次挂载时取一次，弹窗里的「当前版本」用它。
 
+### 6.7 Linux 降级（v2.1.0）
+
+- Linux 仍执行 `check()`：清单里的 `linux-x86_64` 让 AppImage / deb / rpm 三种安装形态都能发现新版本。
+- 主按钮固定「前往下载」，`install()` 直接调用 `openDownloadPage()`，不调用 `downloadAndInstall()`：`.deb` 装在 root 拥有的 `/usr/bin`，`.rpm` 由包管理器维护，原地替换会破坏 dpkg / rpm 数据库；AppImage 虽可自更新，但本期统一口径，避免两套安装分支。
+- 「有 N 个任务正在执行，更新会重启应用」提示只对 Windows 应用内更新展示。
+
 ---
 
 ## 7. 发布流水线改造（`.github/workflows/release.yml`）
 
 ### 7.1 现状
 
-- 已有 tag 触发、macOS universal + Windows x64 双 job、`tauri-action@v1`。
+- 已有 tag 触发、macOS universal + Windows x64 + Linux x64 三 job、`tauri-action@v1`。
 - 当前显式 `uploadUpdaterJson: false`，且注释写明「未接入自动更新」→ 本次要改。
 
 ### 7.2 改动点
 
-1. 两个 build job 增加环境变量：
+1. 三个 build job 共用环境变量：
 
 ```yaml
 env:
@@ -415,9 +423,10 @@ publish-manifest:
 3. 在资产中定位：
    - macOS：`*.app.tar.gz` 与其 `.sig`
    - Windows：`*-setup.exe` 与其 `.sig`
+   - Linux：`*.AppImage` 与其 `.sig`
    - 缺任一 → 报错退出（宁可不发，也不发一份坏清单）
 4. 读取 `.sig` 文件内容作为 `signature`。
-5. 生成 `latest.json`：`darwin-aarch64` 与 `darwin-x86_64` **都指向同一个** `*.app.tar.gz`；`windows-x86_64` 指向 `-setup.exe`；`notes` 取 `release-notes/vX.Y.Z.md` 正文，`pub_date` 取 `publishedAt`。
+5. 生成 `latest.json`：`darwin-aarch64` 与 `darwin-x86_64` **都指向同一个** `*.app.tar.gz`；`windows-x86_64` 指向 `-setup.exe`；`linux-x86_64` 指向 `*.AppImage`；`notes` 取 `release-notes/vX.Y.Z.md` 正文，`pub_date` 取 `publishedAt`。
 6. 只写出 `latest.json`；上传由 workflow 的下一个 step 完成（脚本保持纯函数、可本地重跑）。
 
 ### 7.4 版本介绍（release notes）来源
@@ -499,7 +508,7 @@ publish-manifest:
 2. 构建「旧版」2.0.0（带 updater + 测试配置）并安装。
 3. 临时把版本号改成 2.0.1，构建「新版」并签名；把 `Tree Todo.app.tar.gz` / `-setup.exe` 与 `latest.json` 放进本地目录，`python3 -m http.server 8787` 起服务（测完改回 2.0.0）。
 4. 启动旧版 → 验证自动弹窗 → 更新 → 重启后 `v2.0.1`。
-5. Windows 与 macOS 各跑一遍（Windows 用虚拟机 / 实体机）。
+5. Windows / macOS / Linux 各跑一遍（Windows 用虚拟机 / 实体机；Linux 至少验 `.deb` 与 AppImage 两种形态）。
 
 ### 10.2 验收用例
 
@@ -519,6 +528,9 @@ publish-manifest:
 | U-12 | 正在执行任务时更新 | Win/mac | 弹窗出现「N 个任务正在执行」提示；更新后 run 记录仍在 |
 | U-13 | macOS 检查到更新 | mac | 弹窗展示版本与介绍，主按钮为「前往下载」，打开 Releases 页面 |
 | U-14 | CI 发布 tag 与版本号不一致 | CI | workflow 失败并提示 |
+| U-15 | Linux（deb / rpm / AppImage）检查到更新 | Linux | 弹窗展示版本与介绍，主按钮为「前往下载」，打开 Releases 页面，不出现下载进度 |
+| U-16 | Linux 手动检查无更新 | Linux | toast「已是最新版本」 |
+| U-17 | Linux 有任务执行中检查到更新 | Linux | 不显示「更新会重启应用」提示（不执行应用内安装） |
 
 ---
 
@@ -529,25 +541,25 @@ publish-manifest:
 | P0-1 | 密钥 + 配置 + CI 清单脚本 | 能发一个带 `latest.json` 的 Release |
 | P0-2 | 插件接入 + `ipc/update.ts` + store + 弹窗 + 版本号入口 | 手动检查 → 下载 → 安装闭环 |
 | P0-3 | 启动自动检查 + 菜单入口 | 三条入口齐全 |
-| P0-4 | 双平台实测 + 文档同步 | 验收通过 |
+| P0-4 | 三平台实测 + 文档同步 | 验收通过 |
 
-> P0-1～P0-3 已随 v2.0.0 落地；P0-4 的双平台实测需要真实安装包（Windows 安装一次、macOS 验证「前往下载」），发版前完成。
+> P0-1～P0-3 已随 v2.0.0 落地；P0-4 的三平台实测需要真实安装包（Windows 安装一次、macOS / Linux 验证「前往下载」），发版前完成。
 
 | 文件 | 改动 |
 |---|---|
 | `src-tauri/Cargo.toml` | + 两个插件依赖 |
 | `src-tauri/src/lib.rs` | 插件注册、菜单项、`menu:check-update` 事件 |
-| `src-tauri/tauri.conf.json` | `createUpdaterArtifacts` + `plugins.updater` |
+| `src-tauri/tauri.conf.json` | `createUpdaterArtifacts` + `plugins.updater` + Linux `deb/rpm/appimage` targets |
 | `src-tauri/capabilities/default.json` | + 两条权限，更新描述 |
 | `src/ipc/update.ts` | 新增 |
-| `src/stores/updateStore.ts` | 新增 |
-| `src/components/UpdateDialog.tsx` | 新增 |
+| `src/stores/updateStore.ts` | 新增；v2.1.0 增加 Linux / macOS 下载页降级 |
+| `src/components/UpdateDialog.tsx` | 新增；v2.1.0 适配 Linux 文案与「前往下载」 |
 | `src/components/Sidebar.tsx` | 版本号 span → 按钮（蓝色下划线） |
 | `src/App.tsx` | 自动检查 + 菜单事件 + 挂载弹窗 |
 | `src-tauri/tauri.updater-test.conf.json` | 新增（仅本地测试） |
 | `scripts/updater-manifest.mjs` | 新增 |
 | `release-notes/v2.1.0.md` | 新增（模板） |
-| `.github/workflows/release.yml` | 签名 env + `publish-manifest` job |
+| `.github/workflows/release.yml` | 签名 env + `publish-manifest` job + Linux 构建腿（产物自检 / 上传路径） |
 | `package.json` | 两个前端插件依赖 |
 
 ---
@@ -579,6 +591,12 @@ macOS 放应用名菜单「关于」之后；Windows 放 `Help` 菜单首项「�
 
 同一份纯文本同时用于 GitHub Release 正文与 `latest.json` 的 `notes`（即弹窗内容）；完整开发明细仍写 `CHANGELOG.md`。CI 在文件缺失时直接失败。
 
+### D6 已选 A：Linux 全量降级为「前往下载」（2026-11-14）
+
+- `.deb` / `.rpm` 由系统包管理器维护，Tauri updater 无法原地替换；AppImage 虽可自更新，但为了不让同一平台出现两套安装路径，Linux 统一只提示版本，主按钮打开 Releases。
+- 清单只写 `linux-x86_64`：Tauri 2.14 会先找 `linux-x86_64-{deb,rpm,appimage}`，找不到再回落到它，三种安装形态都能发现新版本。
+- 若后续要给 AppImage 恢复应用内更新，新增一个读 `APPIMAGE` 环境变量的 Rust command 即可分流，不需要改清单结构。
+
 ---
 
 ## 13. 文档同步（合入时必须）
@@ -588,9 +606,10 @@ macOS 放应用名菜单「关于」之后；Windows 放 `Help` 菜单首项「�
 | `docs/01-overview.md` | 依赖与架构补「自动更新」一节（updater 插件、GitHub Releases 清单） |
 | `docs/03-feature-design.md` | 功能表加「自动更新」条目 + 三条入口行为 |
 | `docs/04-ui-ux-design.md` | 弹窗规格、版本号蓝色下划线、检查中状态 |
-| `docs/05-roadmap.md` | 把 M4 的「自动更新」标记为已提前落地 |
+| `docs/05-roadmap.md` | 把 M4 的「自动更新」标记为已提前落地；M3.9 记录 Linux 安装包 |
+| `docs/11-linux-release.md` | Linux 打包、更新降级与验收基线 |
 | `CHANGELOG.md` | v2.0.0 条目补充「自动更新」（AGENTS.md 要求） |
-| `README.md` | 功能列表补充「自动更新」，安装说明写明 macOS 更新会跳下载页 |
+| `README.md` / `README.zh-CN.md` | 功能列表补充「自动更新」，安装说明写明 macOS / Linux 更新会跳下载页 |
 
 ---
 
@@ -600,5 +619,5 @@ macOS 放应用名菜单「关于」之后；Windows 放 `Help` 菜单首项「�
 - **Beta / 灰度通道**：只跟 GitHub 最新正式版，pre-release 不推送。
 - **静默强制更新**：必须用户点「立即更新」，不后台偷偷装。
 - **跳过指定版本**：只保留「稍后」（见 D4）。
-- **Linux 自动更新**：项目只发 Windows / macOS。
+- **Linux 应用内安装**：只提示新版本，安装统一跳下载页（见 D6）。
 - **降级 / 回滚**：默认拒绝低版本；坏版本靠发布更高版本修复。

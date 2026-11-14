@@ -4,7 +4,7 @@
  * 三条入口（启动自动检查 / 侧边栏版本号 / 系统菜单）共用这里：
  * - 自动检查失败必须静默，不能打扰用户（地区网络无法访问 GitHub 是常态）；
  * - 手动检查无更新 → toast「已是最新版本」；
- * - macOS 本轮不做签名公证，安装降级为「打开下载页」。
+ * - macOS 未签名公证、Linux 的 deb/rpm 无法原地替换，安装统一降级为「打开下载页」。
  */
 import { create } from 'zustand';
 
@@ -20,9 +20,17 @@ export type UpdatePhase =
   | 'installing'
   | 'error';
 
+const PLATFORM =
+  typeof navigator !== 'undefined' ? `${navigator.platform} ${navigator.userAgent}` : '';
+
 /** macOS：未签名包无法可靠地原地替换，改为引导到 Release 下载页。 */
-export const IS_MACOS =
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+export const IS_MACOS = /Mac|iPhone|iPad/.test(PLATFORM);
+
+/** Linux：deb/rpm 装在系统目录，AppImage 也不做应用内替换，统一引导下载页。 */
+export const IS_LINUX = /Linux/i.test(PLATFORM);
+
+/** 只提示版本、不做应用内安装的平台。 */
+export const IS_DOWNLOAD_ONLY = IS_MACOS || IS_LINUX;
 
 const DOWNLOAD_PAGE = 'https://github.com/Jeysin/tree-todo/releases/latest';
 
@@ -122,8 +130,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     const { phase, info } = get();
     if (!info) return;
 
-    // macOS：本轮不做签名/公证，原地安装不可靠 → 打开下载页。
-    if (IS_MACOS) {
+    // macOS 未签名公证、Linux 的 deb/rpm 无法原地替换 → 统一打开下载页。
+    if (IS_DOWNLOAD_ONLY) {
       await get().openDownloadPage();
       return;
     }
@@ -150,7 +158,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     try {
       await ipc.openPath(DOWNLOAD_PAGE);
       set({ dialogOpen: false });
-      // macOS 不会再安装，释放检查时持有的原生资源。
+      // 下载页降级不会再安装，释放检查时持有的原生资源。
       await updaterIpc.dispose();
     } catch (e) {
       console.warn('[update] 打开下载页失败', e);
