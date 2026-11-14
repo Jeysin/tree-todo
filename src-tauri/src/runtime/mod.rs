@@ -6,11 +6,14 @@
 //!
 //! 回执鉴权 = 持久 token（Bearer）+ run_id（ULID 难猜）双因素。
 //! 只绑 127.0.0.1；带 Origin 头时必须是 loopback。
+//!
+//! v2.1：服务改为可开关（设置页）。关闭时释放端口、停止监听；开启时重新绑定并起线程。
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -30,23 +33,41 @@ struct McpFile {
 }
 
 pub struct RuntimeState {
-    /// MCP 服务实际监听端口；`None` = 绑定失败，服务不可用（设置页显示告警）。
-    pub port: Option<u16>,
+    /// MCP 服务实际监听端口；`None` = 未运行（用户关闭或绑定失败）。
+    port: Mutex<Option<u16>>,
     /// 持久 token（可重置，见 `reset_token`）。
-    pub token: Mutex<String>,
+    token: Mutex<String>,
     /// run_id → 文档库路径（回执落库用）。
     pub doc_by_run: Mutex<HashMap<String, PathBuf>>,
     /// mcp.json 路径（token 重置时回写）。
     mcp_json: PathBuf,
+    /// 正在监听的 HTTP server；关闭时 unblock 并释放端口。
+    server: Mutex<Option<Arc<tiny_http::Server>>>,
+    /// serve 线程句柄；关闭时 join，确保端口先释放再允许重新绑定。
+    thread: Mutex<Option<JoinHandle<()>>>,
+    /// 启停时 spawn 线程用。
+    app: AppHandle,
 }
 
 impl RuntimeState {
+    pub fn port(&self) -> Option<u16> {
+        *self.port.lock().expect("port mutex poisoned")
+    }
+
     pub fn url(&self) -> Option<String> {
-        self.port.map(|p| format!("http://127.0.0.1:{p}/mcp"))
+        self.port().map(|p| format!("http://127.0.0.1:{p}/mcp"))
     }
 
     pub fn token(&self) -> String {
         self.token.lock().expect("token mutex poisoned").clone()
+    }
+
+    /// 本次运行中服务是否真正在监听（用户开关打开且绑定成功）。
+    pub fn running(&self) -> bool {
+        self.server
+            .lock()
+            .expect("server mutex poisoned")
+            .is_some()
     }
 
     pub fn register(&self, run_id: &str, doc_path: PathBuf) {
@@ -65,15 +86,80 @@ impl RuntimeState {
 
     /// 重置 token（设置页）：立即生效并持久化，旧 token 随之失效。
     pub fn reset_token(&self) -> AppResult<String> {
+        let port = self.port().unwrap_or(DEFAULT_MCP_PORT);
         let token = new_token();
         let file = McpFile {
-            port: self.port.unwrap_or(DEFAULT_MCP_PORT),
+            port,
             token: token.clone(),
             version: env!("CARGO_PKG_VERSION").into(),
         };
         write_mcp_json(&self.mcp_json, &file)?;
         *self.token.lock().expect("token mutex poisoned") = token.clone();
         Ok(token)
+    }
+
+    /// 启动监听（设置页开启 / 应用启动时开关为开）。
+    /// 端口被占用时从 `mcp.json` 的首选端口开始 +1 重试（最多 10 个）。
+    pub fn enable(self: &Arc<Self>) -> AppResult<()> {
+        let mut server_slot = self.server.lock().expect("server mutex poisoned");
+        if server_slot.is_some() {
+            return Ok(());
+        }
+        let file = read_mcp_file(&self.mcp_json)?;
+
+        let mut bound: Option<(tiny_http::Server, u16)> = None;
+        for offset in 0..10u16 {
+            let port = file.port.saturating_add(offset);
+            if port == 0 {
+                break;
+            }
+            if let Some(server) = bind_server(port) {
+                bound = Some((server, port));
+                break;
+            }
+        }
+        let (server, port) = match bound {
+            Some(v) => v,
+            None => {
+                return Err(AppError::BadRequest(format!(
+                    "MCP 端口 {} 起始的 10 个端口都被占用，服务未启动",
+                    file.port
+                )));
+            }
+        };
+        if port != file.port {
+            // 端口漂移要写回 mcp.json，并提示用户重新复制 Agent 配置。
+            let updated = McpFile {
+                port,
+                token: file.token.clone(),
+                version: file.version.clone(),
+            };
+            write_mcp_json(&self.mcp_json, &updated)?;
+            eprintln!("MCP 端口被占用，已漂移到 {port}；请到设置页重新复制 MCP 配置");
+        }
+
+        let server = Arc::new(server);
+        *self.port.lock().expect("port mutex poisoned") = Some(port);
+        *server_slot = Some(Arc::clone(&server));
+
+        let st = Arc::clone(self);
+        let app = self.app.clone();
+        let handle = thread::spawn(move || serve(server, app, st));
+        *self.thread.lock().expect("thread mutex poisoned") = Some(handle);
+        Ok(())
+    }
+
+    /// 停止监听并释放端口（设置页关闭 / 应用退出时无需显式调用，进程结束即释放）。
+    pub fn disable(&self) {
+        let server = self.server.lock().expect("server mutex poisoned").take();
+        if let Some(server) = server {
+            // 唤醒阻塞在 incoming_requests() 的 serve 线程。
+            server.unblock();
+        }
+        if let Some(handle) = self.thread.lock().expect("thread mutex poisoned").take() {
+            let _ = handle.join();
+        }
+        *self.port.lock().expect("port mutex poisoned") = None;
     }
 }
 
@@ -85,6 +171,24 @@ fn new_token() -> String {
     )
 }
 
+/// 只绑 127.0.0.1，并启用 SO_REUSEADDR。
+/// 关键：MCP 开关关闭再打开时，上一次连接可能还在 TIME_WAIT（Windows 默认 2 分钟），
+/// 不开 SO_REUSEADDR 会绑定失败、端口漂移，已配置的 Agent 就失联了。
+fn bind_server(port: u16) -> Option<tiny_http::Server> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )
+    .ok()?;
+    socket.set_reuse_address(true).ok()?;
+    socket.bind(&addr.into()).ok()?;
+    socket.listen(128).ok()?;
+    let listener: std::net::TcpListener = socket.into();
+    tiny_http::Server::from_listener(listener, None).ok()
+}
+
 fn write_mcp_json(path: &PathBuf, file: &McpFile) -> AppResult<()> {
     let body = serde_json::to_vec_pretty(file)
         .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
@@ -92,10 +196,9 @@ fn write_mcp_json(path: &PathBuf, file: &McpFile) -> AppResult<()> {
     Ok(())
 }
 
-/// 启动 MCP 服务：读/建 `mcp.json`（固定端口 + 持久 token），绑定失败时逐个 +1 重试。
-pub fn start(app: AppHandle, data_dir: PathBuf) -> AppResult<Arc<RuntimeState>> {
-    let mcp_json = data_dir.join("mcp.json");
-    let file: McpFile = match std::fs::read(&mcp_json) {
+/// 读取 mcp.json；不存在时创建一份（固定端口 + 新 token）。
+fn read_mcp_file(path: &PathBuf) -> AppResult<McpFile> {
+    let file: McpFile = match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
             AppError::Io(std::io::Error::other(format!("mcp.json 损坏: {e}")))
         })?,
@@ -105,60 +208,36 @@ pub fn start(app: AppHandle, data_dir: PathBuf) -> AppResult<Arc<RuntimeState>> 
             version: env!("CARGO_PKG_VERSION").into(),
         },
     };
-    if !mcp_json.exists() {
-        write_mcp_json(&mcp_json, &file)?;
+    if !path.exists() {
+        write_mcp_json(path, &file)?;
     }
+    Ok(file)
+}
 
-    // 绑定：首选 mcp.json 里的端口，被占用则 +1 重试（最多 10 个）。
-    let mut bound: Option<(tiny_http::Server, u16)> = None;
-    for offset in 0..10u16 {
-        let port = file.port.saturating_add(offset);
-        if port == 0 {
-            break;
-        }
-        if let Ok(server) = tiny_http::Server::http(format!("127.0.0.1:{port}")) {
-            bound = Some((server, port));
-            break;
-        }
-    }
-    let (server, port) = match bound {
-        Some(v) => v,
-        None => {
-            // 服务起不来不阻塞应用：账本照常工作，Agent 回执进不来（设置页有告警）。
-            eprintln!("MCP 端口 {} 起始的 10 个端口都被占用，MCP 服务未启动", file.port);
-            let state = Arc::new(RuntimeState {
-                port: None,
-                token: Mutex::new(file.token),
-                doc_by_run: Mutex::new(HashMap::new()),
-                mcp_json,
-            });
-            return Ok(state);
-        }
-    };
-    if port != file.port {
-        // 端口漂移要写回 mcp.json，并提示用户重新复制 Agent 配置。
-        let updated = McpFile {
-            port,
-            token: file.token.clone(),
-            version: file.version.clone(),
-        };
-        write_mcp_json(&mcp_json, &updated)?;
-        eprintln!("MCP 端口被占用，已漂移到 {port}；请到设置页重新复制 MCP 配置");
-    }
+/// 启动运行时：读/建 `mcp.json`（固定端口 + 持久 token）；`enabled` 为 false 时只准备配置，
+/// 不监听端口（用户可在设置页随时打开）。
+pub fn start(app: AppHandle, data_dir: PathBuf, enabled: bool) -> AppResult<Arc<RuntimeState>> {
+    let mcp_json = data_dir.join("mcp.json");
+    let file = read_mcp_file(&mcp_json)?;
 
     let state = Arc::new(RuntimeState {
-        port: Some(port),
+        port: Mutex::new(None),
         token: Mutex::new(file.token),
         doc_by_run: Mutex::new(HashMap::new()),
         mcp_json,
+        server: Mutex::new(None),
+        thread: Mutex::new(None),
+        app,
     });
 
-    let st = state.clone();
-    thread::spawn(move || serve(server, app, st));
+    if enabled && let Err(err) = state.enable() {
+        // 服务起不来不阻塞应用：账本照常工作，Agent 回执进不来（设置页有告警）。
+        eprintln!("MCP 服务未启动: {err}");
+    }
     Ok(state)
 }
 
-fn serve(server: tiny_http::Server, app: AppHandle, state: Arc<RuntimeState>) {
+fn serve(server: Arc<tiny_http::Server>, app: AppHandle, state: Arc<RuntimeState>) {
     for mut request in server.incoming_requests() {
         let method = request.method().clone();
         let url = request.url().to_string();
@@ -245,6 +324,9 @@ fn is_loopback_origin(origin: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+
     #[test]
     fn loopback_origin_check() {
         use super::is_loopback_origin;
@@ -253,5 +335,40 @@ mod tests {
         assert!(is_loopback_origin("http://[::1]:8080"));
         assert!(!is_loopback_origin("http://evil.example.com"));
         assert!(!is_loopback_origin("https://192.168.1.5"));
+    }
+
+    /// 开关 MCP 的前提：unblock + 释放后，同一端口能立刻重新绑定。
+    #[test]
+    fn server_can_rebind_same_port_after_unblock() {
+        let server = super::bind_server(0).expect("bind ephemeral port");
+        let port = match server.server_addr() {
+            tiny_http::ListenAddr::IP(addr) => addr.port(),
+            #[cfg(unix)]
+            _ => panic!("unexpected unix socket"),
+        };
+        let server = Arc::new(server);
+        let serving = Arc::clone(&server);
+        let handle = std::thread::spawn(move || {
+            for request in serving.incoming_requests() {
+                let _ = request.respond(tiny_http::Response::from_string("ok"));
+            }
+        });
+
+        // 产生一次真实连接，尽量接近 Agent 调用后的状态（可能留下 TIME_WAIT）。
+        {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            client
+                .write_all(b"GET /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            let mut body = String::new();
+            let _ = client.read_to_string(&mut body);
+        }
+
+        server.unblock();
+        handle.join().unwrap();
+        drop(server);
+
+        let rebound = super::bind_server(port);
+        assert!(rebound.is_some(), "同一端口应能在关闭后立即重新绑定");
     }
 }

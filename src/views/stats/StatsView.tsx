@@ -2,6 +2,7 @@
 import { useMemo } from 'react';
 import { CheckCircle2, ListTodo, TrendingUp } from 'lucide-react';
 
+import { useT } from '../../i18n';
 import { useTodoStore } from '../../stores/todoStore';
 
 interface RootStats {
@@ -17,6 +18,7 @@ interface RootStats {
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function StatsView() {
+  const t = useT();
   const nodes = useTodoStore(s => s.nodes);
   const roots = useTodoStore(s => s.roots);
   const childrenOf = useTodoStore(s => s.childrenOf);
@@ -46,7 +48,7 @@ export function StatsView() {
       const total = pending + done;
       return {
         id: rid,
-        name: nodes[rid]?.content || '未命名任务线',
+        name: nodes[rid]?.content || t('未命名任务线'),
         pending,
         done,
         total,
@@ -55,7 +57,7 @@ export function StatsView() {
       };
     });
     return results.sort((a, b) => b.total - a.total);
-  }, [nodes, roots, childrenOf]);
+  }, [nodes, roots, childrenOf, t]);
 
   const overall = useMemo(() => {
     const pending = perRoot.reduce((s, r) => s + r.pending, 0);
@@ -68,25 +70,25 @@ export function StatsView() {
   return (
     <div className="absolute inset-0 overflow-y-auto">
       <div className="max-w-3xl mx-auto py-6 px-4">
-        <h1 className="text-lg font-semibold text-primary mb-1">统计</h1>
-        <p className="text-xs text-muted mb-5">按任务线查看叶子完成进度与最近 7 天完成量</p>
+        <h1 className="text-lg font-semibold text-primary mb-1">{t('统计')}</h1>
+        <p className="text-xs text-muted mb-5">{t('按任务线查看叶子完成进度与最近 7 天完成量')}</p>
 
         {/* 总览 */}
         <div className="grid grid-cols-3 gap-3 mb-6">
           <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex items-center gap-1.5 text-xs text-muted mb-2">
               <ListTodo className="w-3.5 h-3.5" />
-              叶子总数
+              {t('叶子总数')}
             </div>
             <div className="text-2xl font-semibold text-primary tabular-nums">{overall.total}</div>
             <div className="text-xs text-muted mt-1">
-              {overall.pending} 待处理 · {overall.done} 已完成
+              {t('{pending} 待处理 · {done} 已完成', { pending: overall.pending, done: overall.done })}
             </div>
           </div>
           <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex items-center gap-1.5 text-xs text-muted mb-2">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              完成率
+              {t('完成率')}
             </div>
             <div className="text-2xl font-semibold text-primary tabular-nums">{overall.rate}%</div>
             <div className="h-1.5 mt-2 rounded-full bg-base overflow-hidden">
@@ -99,16 +101,16 @@ export function StatsView() {
           <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex items-center gap-1.5 text-xs text-muted mb-2">
               <TrendingUp className="w-3.5 h-3.5" />
-              最近 7 天完成
+              {t('最近 7 天完成')}
             </div>
             <div className="text-2xl font-semibold text-primary tabular-nums">{overall.weekDone}</div>
-            <div className="text-xs text-muted mt-1">叶子节点</div>
+            <div className="text-xs text-muted mt-1">{t('叶子节点')}</div>
           </div>
         </div>
 
         {/* 每条任务线 */}
         {perRoot.length === 0 ? (
-          <p className="py-16 text-center text-sm text-muted">还没有任务线，去树里创建第一个任务吧</p>
+          <p className="py-16 text-center text-sm text-muted">{t('还没有任务线，去树里创建第一个任务吧')}</p>
         ) : (
           <div className="flex flex-col gap-2.5">
             {perRoot.map(r => (
@@ -129,13 +131,13 @@ export function StatsView() {
                   />
                 </div>
                 <div className="flex items-center gap-3 mt-2 text-xs text-muted tabular-nums">
-                  <span>{r.pending} 待处理</span>
+                  <span>{t('{n} 待处理', { n: r.pending })}</span>
                   <span className="text-border">·</span>
-                  <span>{r.done} 已完成</span>
+                  <span>{t('{n} 已完成', { n: r.done })}</span>
                   {r.weekDone > 0 && (
                     <>
                       <span className="text-border">·</span>
-                      <span className="text-success">本周 +{r.weekDone}</span>
+                      <span className="text-success">{t('本周 +{n}', { n: r.weekDone })}</span>
                     </>
                   )}
                 </div>

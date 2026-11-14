@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 
 import type { DocMeta, FolderMeta } from '../ipc/types';
+import { useT } from '../i18n';
 import {
   buildDocTree,
   buildFolderPathMap,
@@ -76,16 +77,21 @@ export function DocPicker({
   value,
   onChange,
   includeAll = true,
-  allLabel = '全部文档',
-  placeholder = '选择文档',
+  allLabel,
+  placeholder,
   disabled = false,
   className = '',
-  ariaLabel = '选择文档',
+  ariaLabel,
 }: DocPickerProps) {
+  const t = useT();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const resolvedAllLabel = allLabel ?? t('全部文档');
+  const resolvedPlaceholder = placeholder ?? t('选择文档');
+  const resolvedAriaLabel = ariaLabel ?? t('选择文档');
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -117,7 +123,7 @@ export function DocPicker({
 
     const out: Row[] = [];
     if (includeAll) {
-      out.push({ key: 'all', kind: 'all', id: '', name: allLabel, depth: 0, count: documents.length });
+      out.push({ key: 'all', kind: 'all', id: '', name: resolvedAllLabel, depth: 0, count: documents.length });
     }
     const walk = (nodes: DocTreeNode[], depth: number) => {
       for (const node of nodes) {
@@ -140,7 +146,7 @@ export function DocPicker({
     };
     walk(tree, 0);
     return out;
-  }, [query, docsInOrder, pathMap, includeAll, allLabel, documents.length, expanded, tree]);
+  }, [query, docsInOrder, pathMap, includeAll, resolvedAllLabel, documents.length, expanded, tree]);
 
   // 行数变化（搜索 / 折叠）后把高亮行夹回有效范围。
   useEffect(() => {
@@ -286,9 +292,12 @@ export function DocPicker({
     }
   };
 
-  const label = currentDoc?.name ?? (includeAll ? allLabel : placeholder);
+  const label = currentDoc?.name ?? (includeAll ? resolvedAllLabel : resolvedPlaceholder);
   const triggerTitle = currentDoc
-    ? `统计范围：${currentPath ? `${currentPath} / ` : ''}${currentDoc.name}`
+    ? t('统计范围：{path}{name}', {
+        path: currentPath ? `${currentPath} / ` : '',
+        name: currentDoc.name,
+      })
     : label;
 
   return (
@@ -325,7 +334,7 @@ export function DocPicker({
           <div
             ref={panelRef}
             role="dialog"
-            aria-label={ariaLabel}
+            aria-label={resolvedAriaLabel}
             onKeyDown={onPanelKeyDown}
             style={{
               left: pos?.left ?? -9999,
@@ -345,8 +354,8 @@ export function DocPicker({
                   setQuery(e.target.value);
                   setActive(0);
                 }}
-                placeholder="搜索文档…"
-                aria-label="搜索文档"
+                placeholder={t('搜索文档…')}
+                aria-label={t('搜索文档')}
                 className="h-5 min-w-0 flex-1 bg-transparent text-[12px] text-primary outline-none placeholder:text-muted/70"
               />
               {query && (
@@ -357,7 +366,7 @@ export function DocPicker({
                     setActive(0);
                     inputRef.current?.focus();
                   }}
-                  aria-label="清空搜索"
+                  aria-label={t('清空搜索')}
                   className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:bg-base hover:text-primary"
                 >
                   <X className="h-3 w-3" />
@@ -368,11 +377,11 @@ export function DocPicker({
             <div
               ref={listRef}
               role="listbox"
-              aria-label="文档列表"
+              aria-label={t('文档列表')}
               className="min-h-0 flex-1 overflow-y-auto py-1"
             >
               {rows.length === 0 && (
-                <div className="px-3 py-6 text-center text-[11.5px] text-muted">没有匹配的文档</div>
+                <div className="px-3 py-6 text-center text-[11.5px] text-muted">{t('没有匹配的文档')}</div>
               )}
               {rows.map((row, index) => {
                 const selected = row.kind === 'all' ? value === null && includeAll : row.id === value;
@@ -434,9 +443,11 @@ export function DocPicker({
 
             <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border px-2.5 py-1.5 text-[10.5px] text-muted/80">
               <span className="tabular-nums">
-                {query ? `${rows.length} 个匹配` : `${documents.length} 个文档`}
+                {query
+                  ? t('{n} 个匹配', { n: rows.length })
+                  : t('{n} 个文档', { n: documents.length })}
               </span>
-              <span className="tabular-nums">↑↓ 选择 · ↵ 确认 · Esc 关闭</span>
+              <span className="tabular-nums">{t('↑↓ 选择 · ↵ 确认 · Esc 关闭')}</span>
             </div>
           </div>,
           document.body,

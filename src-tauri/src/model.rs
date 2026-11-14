@@ -324,6 +324,9 @@ pub struct DocIndex {
     /// 旧索引没有该字段，default 回落到内置默认约束。
     #[serde(default = "default_prompt_constraints")]
     pub prompt_constraints: String,
+    /// v2.1：本地 MCP 服务开关（默认开启）；关闭后不监听端口，Agent 无法回写执行状态。
+    #[serde(default = "default_mcp_enabled")]
+    pub mcp_enabled: bool,
 }
 
 impl Default for DocIndex {
@@ -337,6 +340,7 @@ impl Default for DocIndex {
             trash_folders: Vec::new(),
             trash_retention_days: default_trash_retention_days(),
             prompt_constraints: default_prompt_constraints(),
+            mcp_enabled: default_mcp_enabled(),
         }
     }
 }
@@ -443,6 +447,9 @@ fn default_trash_retention_days() -> u32 {
 }
 fn default_prompt_constraints() -> String {
     crate::agents::DEFAULT_PROMPT_CONSTRAINTS.to_string()
+}
+fn default_mcp_enabled() -> bool {
+    true
 }
 
 impl From<&Node> for ImportNode {

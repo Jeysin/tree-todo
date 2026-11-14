@@ -5,7 +5,14 @@
  * `new Date(y, m-1, d)`，禁止 `new Date('2026-11-14')`（按 UTC 解析，东八区会少一天）。
  */
 
-export const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'] as const;
+import { getLang, t } from '../i18n';
+
+/** 日历网格顶部 / 左侧标签（周一起）。英文用单字母，避免 18px 标签列放不下。 */
+export function weekdayLabels(): readonly string[] {
+  return getLang() === 'zh'
+    ? ['一', '二', '三', '四', '五', '六', '日']
+    : ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+}
 
 export interface HeatCell {
   /** YYYY-MM-DD */
@@ -136,7 +143,7 @@ export function buildCalendar(
     }
     const monday = parseDay(cursor);
     const month = monday.getMonth();
-    const monthLabel = month === previousMonth ? null : `${month + 1}月`;
+    const monthLabel = month === previousMonth ? null : t(`${month + 1}月`);
     previousMonth = month;
     weeks.push({ cells, monthLabel });
     cursor = addDays(cursor, 7);
@@ -174,9 +181,17 @@ export function rangeFor(
   return { startDate: addDays(endDate, -364), endDate };
 }
 
-/** 「2026年11月14日 · 周六」。 */
+/** 「2026年11月14日 · 周六」/「Sat, Nov 14, 2026」。 */
 export function formatDateCN(iso: string): string {
   const d = parseDay(iso);
+  if (getLang() === 'en') {
+    return d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  }
   const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 · ${weekday}`;
 }
@@ -184,5 +199,8 @@ export function formatDateCN(iso: string): string {
 /** tooltip / aria-label 用的短格式。 */
 export function formatDateShort(iso: string): string {
   const d = parseDay(iso);
+  if (getLang() === 'en') {
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }

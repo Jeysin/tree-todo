@@ -131,6 +131,9 @@ export const ipc = {
     invoke('set_prompt_constraints', { text }),
   /** 应用版本号（用于左上角展示）。 */
   getAppVersion: (): Promise<string> => getVersion(),
+  /** 同步原生菜单文案（启动 / 切换语言时调用）。 */
+  setMenuLanguage: (lang: 'zh' | 'en'): Promise<void> =>
+    invoke('set_menu_language', { lang }),
   deleteFolder: (id: string): Promise<DocIndex> => invoke('delete_folder', { id }),
   switchDocument: (id: string): Promise<void> => invoke('switch_document', { id }),
   getCurrentDocument: (): Promise<DocMeta> => invoke('get_current_document'),
@@ -160,6 +163,9 @@ export const ipc = {
   copyText: (text: string): Promise<void> => invoke('copy_text', { text }),
   /** MCP 服务配置（端口 / token / URL）。 */
   getMcpConfig: (): Promise<McpConfig> => invoke('get_mcp_config'),
+  /** 开关 MCP 服务：关闭后立即停止本地监听，开启时重新绑定端口。 */
+  setMcpEnabled: (enabled: boolean): Promise<McpConfig> =>
+    invoke('set_mcp_enabled', { enabled }),
   /** 重置 MCP token（重置后需更新 Agent 侧配置）。 */
   resetMcpToken: (): Promise<McpConfig> => invoke('reset_mcp_token'),
 

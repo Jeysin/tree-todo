@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import type { NodeExecution } from '../ipc/types';
 
 const SHORT_NAME: Record<string, string> = {
@@ -37,13 +38,17 @@ export function execLabel(exec: NodeExecution | null | undefined, now: number): 
   const dur = formatDuration(liveDuration(exec, now));
   switch (exec.state) {
     case 'queued':
-      return '排队中';
+      return t('排队中');
     case 'running':
-      return dur ? `${agent} · 执行中 · ${dur}` : `${agent} · 执行中`;
+      return dur
+        ? t('{agent} · 执行中 · {dur}', { agent, dur })
+        : t('{agent} · 执行中', { agent });
     case 'awaiting_review':
-      return exec.needsConfirmation ? `待确认 · ${agent}` : `待验收 · ${agent}`;
+      return exec.needsConfirmation
+        ? t('待确认 · {agent}', { agent })
+        : t('待验收 · {agent}', { agent });
     case 'failed':
-      return `失败 · ${agent}`;
+      return t('失败 · {agent}', { agent });
     default:
       return '';
   }

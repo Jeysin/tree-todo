@@ -507,24 +507,50 @@ pub fn copy_text(text: String) -> AppResult<()> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpConfigView {
+    /// 用户开关（持久化，默认开启）。
     pub enabled: bool,
+    /// 本次运行是否真正监听成功（关闭 / 端口被占用时为 false）。
+    pub running: bool,
     pub port: Option<u16>,
     pub url: Option<String>,
     pub token: String,
 }
 
-#[tauri::command]
-pub fn get_mcp_config(state: State<'_, AppState>) -> McpConfigView {
-    McpConfigView {
-        enabled: state.runtime.port.is_some(),
-        port: state.runtime.port,
+fn mcp_view(state: &State<'_, AppState>) -> AppResult<McpConfigView> {
+    Ok(McpConfigView {
+        enabled: state.docs.mcp_enabled().unwrap_or(true),
+        running: state.runtime.running(),
+        port: state.runtime.port(),
         url: state.runtime.url(),
         token: state.runtime.token(),
+    })
+}
+
+#[tauri::command]
+pub fn get_mcp_config(state: State<'_, AppState>) -> AppResult<McpConfigView> {
+    mcp_view(&state)
+}
+
+/// 开关 MCP 服务：关闭立即停止监听并释放端口；开启时重新绑定（端口沿用 mcp.json）。
+#[tauri::command]
+pub fn set_mcp_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> AppResult<McpConfigView> {
+    if enabled {
+        let started = state.runtime.enable();
+        // 即使端口全被占用也保存开关：下次启动会自动重试，设置页也能看到「开关开、服务未运行」。
+        state.docs.set_mcp_enabled(true)?;
+        started?;
+    } else {
+        state.runtime.disable();
+        state.docs.set_mcp_enabled(false)?;
     }
+    mcp_view(&state)
 }
 
 #[tauri::command]
 pub fn reset_mcp_token(state: State<'_, AppState>) -> AppResult<McpConfigView> {
     state.runtime.reset_token()?;
-    Ok(get_mcp_config(state))
+    mcp_view(&state)
 }

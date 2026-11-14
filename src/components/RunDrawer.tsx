@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Check, Square, X, XCircle } from 'lucide-react';
 
+import { useT } from '../i18n';
 import { ipc } from '../ipc';
 import type { RunView } from '../ipc/types';
 import { formatDuration } from '../lib/exec';
 import { useRunStore } from '../stores/runStore';
 
-/** run 状态文案（docs/06 v2 §6.1）。 */
-const STATUS_TEXT: Record<string, string> = {
+/** run 状态文案（docs/06 v2 §6.1）：渲染时经 t() 翻译。 */
+const STATUS_KEYS: Record<string, string> = {
   dispatched: '已复制，等待 Agent 开始',
   queued: '排队中（旧数据）',
   running: '执行中',
@@ -22,6 +23,7 @@ const STATUS_TEXT: Record<string, string> = {
 /** 执行详情面板（docs/06 v2 §9：无进程日志，展示回执与验收）。
  *  v1 的实时日志区 / 中断按钮随 push 方向移除；running 卡死用「标记结束」收口（D33）。 */
 export function RunDrawer() {
+  const t = useT();
   const runId = useRunStore(s => s.activeRunId);
   const close = useRunStore(s => s.openRun);
   const runs = useRunStore(s => s.runs);
@@ -49,7 +51,7 @@ export function RunDrawer() {
   return (
     <aside className="absolute right-0 top-0 bottom-0 w-[440px] z-40 border-l border-border bg-surface shadow-2xl flex flex-col">
       <header className="flex items-center gap-2 px-4 h-12 border-b border-border shrink-0">
-        <span className="text-sm font-medium text-primary">执行</span>
+        <span className="text-sm font-medium text-primary">{t('执行')}</span>
         <span className="text-[11px] text-muted truncate">{run?.agentId}</span>
         <span className="ml-auto text-[11px] text-muted tabular-nums">
           {run ? formatDuration(run.durationMs) : ''}
@@ -75,7 +77,13 @@ export function RunDrawer() {
                   : 'bg-muted',
           ].join(' ')}
         />
-        <span className="text-primary">{STATUS_TEXT[run?.status ?? ''] ?? run?.status ?? '加载中'}</span>
+        <span className="text-primary">
+          {run?.status
+            ? STATUS_KEYS[run.status]
+              ? t(STATUS_KEYS[run.status])
+              : run.status
+            : t('加载中…')}
+        </span>
         {run?.summary && (
           <span className="text-muted truncate" title={run.summary}>
             {run.summary}
@@ -86,7 +94,7 @@ export function RunDrawer() {
 
       {run && run.nodes.length > 0 && (
         <div className="px-4 py-2 border-b border-border max-h-56 overflow-y-auto shrink-0">
-          <div className="text-[11px] text-muted mb-1">任务回执</div>
+          <div className="text-[11px] text-muted mb-1">{t('任务回执')}</div>
           <ul className="space-y-1">
             {run.nodes.map(n => (
               <li key={n.nodeId} className="flex items-center gap-2 text-xs">
@@ -99,11 +107,11 @@ export function RunDrawer() {
                 <span className="truncate text-primary flex-1">{n.content || n.nodeId}</span>
                 <span className="text-muted">
                   {n.review === 'accepted'
-                    ? '已验收'
+                    ? t('已验收')
                     : n.review === 'rejected'
-                      ? '已驳回'
+                      ? t('已驳回')
                       : n.review === 'dismissed'
-                        ? '已忽略'
+                        ? t('已忽略')
                         : n.report}
                 </span>
               </li>
@@ -115,11 +123,11 @@ export function RunDrawer() {
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 text-xs text-muted/80 leading-6">
         {run?.prompt ? (
           <details>
-            <summary className="cursor-pointer select-none text-muted">Prompt 快照（复制时的内容）</summary>
+            <summary className="cursor-pointer select-none text-muted">{t('Prompt 快照（复制时的内容）')}</summary>
             <pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-muted/70">{run.prompt}</pre>
           </details>
         ) : (
-          <div>此面板展示回执与验收操作；执行过程由 Agent 通过 MCP 工具回报。</div>
+          <div>{t('此面板展示回执与验收操作；执行过程由 Agent 通过 MCP 工具回报。')}</div>
         )}
       </div>
 
@@ -127,13 +135,13 @@ export function RunDrawer() {
         {isRunning && (
           <div className="space-y-1.5">
             <div className="text-[11px] text-muted/70">
-              计时会一直走下去；若 Agent 已停止工作但未回报完成，可手动收口。
+              {t('计时会一直走下去；若 Agent 已停止工作但未回报完成，可手动收口。')}
             </div>
             <button
               onClick={() => void closeRun(runId)}
               className="h-8 px-3 rounded-md border border-border text-xs text-muted hover:text-red-500 inline-flex items-center gap-1"
             >
-              <Square className="w-3.5 h-3.5" /> 标记结束
+              <Square className="w-3.5 h-3.5" /> {t('标记结束')}
             </button>
           </div>
         )}
@@ -143,13 +151,13 @@ export function RunDrawer() {
               onClick={() => void accept(runId, pending.map(n => n.nodeId))}
               className="h-8 px-3 rounded-md bg-success text-white text-xs inline-flex items-center gap-1"
             >
-              <Check className="w-3.5 h-3.5" /> 全部通过
+              <Check className="w-3.5 h-3.5" /> {t('全部通过')}
             </button>
             <button
               onClick={() => setShowReject(v => !v)}
               className="h-8 px-3 rounded-md border border-border text-xs inline-flex items-center gap-1 text-primary"
             >
-              <XCircle className="w-3.5 h-3.5" /> 驳回
+              <XCircle className="w-3.5 h-3.5" /> {t('驳回')}
             </button>
           </div>
         )}
@@ -158,7 +166,7 @@ export function RunDrawer() {
             <textarea
               value={feedback}
               onChange={e => setFeedback(e.target.value)}
-              placeholder="驳回原因（写回节点备注）"
+              placeholder={t('驳回原因（写回节点备注）')}
               className="w-full h-16 px-2 py-1.5 rounded border border-border bg-base text-xs outline-none focus:border-accent resize-none"
             />
             <button
@@ -168,7 +176,7 @@ export function RunDrawer() {
               }}
               className="h-7 px-2.5 rounded bg-red-500 text-white text-xs"
             >
-              确认驳回
+              {t('确认驳回')}
             </button>
           </div>
         )}
