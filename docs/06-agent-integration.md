@@ -358,7 +358,9 @@ tree-todo 痕迹：
 - `{{nodeId}}` {{content}}
 
 1. **开始执行前**，先调用 MCP 工具 `tree_todo_start`：
-   `{"run_id":"{{runId}}","agent_name":"<你的产品名称，如 Claude Code / Trae>"}`
+   `{"run_id":"{{runId}}","agent_name":"<你当前所在产品的名称>"}`
+   ——`agent_name` 必须填写 Agent 自己所属的产品名称，**不要**在 Prompt 里写具体产品名做示例
+   （模型会照抄示例名，导致回执显示错误的 Agent）；不要留空、不要照抄占位符。
    ——任务将标记为「执行中」并开始计时。
 2. **全部完成后**，调用 MCP 工具 `tree_todo_complete_tasks`：
    `{"run_id":"{{runId}}","tasks":[{"id":"{{nodeId}}","result":"done","summary":"一句话说明"}]}`

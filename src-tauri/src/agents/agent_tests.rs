@@ -88,6 +88,18 @@ fn receipt_variant_contains_protocol() {
 }
 
 #[test]
+fn receipt_protocol_has_no_agent_name_examples() {
+    let fx = single();
+    let prompt = fx.prompt(Some("run_x"), PromptVariant::Receipt);
+    // 示例里写具体产品名，模型会照抄（WorkBuddy 回报成 Trae）——回执 Agent 名必须由 Agent 自报。
+    for name in ["Trae", "Claude Code", "Codex"] {
+        assert!(!prompt.contains(name), "回执协议不得出现具体产品名示例：{name}");
+    }
+    assert!(prompt.contains("agent_name"), "agent_name 参数仍须出现");
+    assert!(prompt.contains("不要照抄"), "必须显式禁止照抄占位符");
+}
+
+#[test]
 fn note_empty_omitted_and_present_rendered() {
     let fx = single();
     let prompt = fx.prompt(None, PromptVariant::Plain);

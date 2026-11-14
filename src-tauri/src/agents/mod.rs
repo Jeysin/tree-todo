@@ -324,8 +324,9 @@ fn receipt_section(opts: &PromptOptions<'_>) -> String {
     out.push_str(&id_list);
     out.push_str("\n\n1. **开始执行前**，先调用 MCP 工具 `tree_todo_start`：\n");
     out.push_str(&format!(
-        "   `{{\"run_id\":\"{run_id}\",\"agent_name\":\"<你的产品名称，如 Claude Code / Trae>\"}}`\n"
+        "   `{{\"run_id\":\"{run_id}\",\"agent_name\":\"<你当前所在产品的名称>\"}}`\n"
     ));
+    out.push_str("   ——`agent_name` 必须填写你自己所属的产品名称，不要留空、不要照抄模板里的占位符。\n");
     out.push_str("   ——任务将标记为「执行中」并开始计时。\n");
     out.push_str("2. **全部完成后**，调用 MCP 工具 `tree_todo_complete_tasks`：\n");
     out.push_str(&format!(

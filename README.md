@@ -375,7 +375,7 @@ Use `⌘` on macOS and `Ctrl` on Windows.
 | Complete / uncomplete | `S` | Delete node | `Delete` |
 | Undo / redo | `⌘Z` / `⇧⌘Z` | Search | `⌘F` |
 | Tree / Flat / Stats / Overview | `⌘1` / `⌘2` / `⌘3` / `⌘4` | Fit to view | `⇧1` |
-| Collapse / expand node | `⌘.` / `⌘,` | Move sibling up / down | `Alt+↑` / `Alt+↓` |
+| Collapse / expand node | `⌘.` | Move sibling up / down | `Alt+↑` / `Alt+↓` |
 | Copy Prompt | `⌘⇧C` | Copy Prompt (with receipt) | `⌘⇧R` |
 | Copy node (with subtree) | `⌘C` | Paste as child node | `⌘V` |
 | Node details | `Alt+Enter` | Pan the canvas | `Space` + drag |

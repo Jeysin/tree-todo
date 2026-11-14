@@ -123,7 +123,7 @@ fn tool_defs() -> Value {
                 "type": "object",
                 "properties": {
                     "run_id": { "type": "string", "description": "Prompt 中的运行 ID" },
-                    "agent_name": { "type": "string", "description": "你的产品名称（如 Claude Code / Trae）" }
+                    "agent_name": { "type": "string", "description": "你当前所在产品的名称（如实填写，不要照抄示例）" }
                 },
                 "required": ["run_id"]
             }
