@@ -135,7 +135,12 @@ pub fn delete_folder(state: State<'_, AppState>, id: String) -> AppResult<DocInd
         state.history.lock().expect("history mutex poisoned").clear();
     }
 
-    state.docs.delete_folder(&id)
+    let idx = state.docs.delete_folder(&id)?;
+    // 目录内文档整体进回收站：它们的历史必须立即从总览消失（docs/10 决策 3）。
+    if let Err(err) = state.stats.sync_all() {
+        eprintln!("删除目录后同步总览失败: {err}");
+    }
+    Ok(idx)
 }
 
 /// 删除文档：移入文档回收站（至少保留一个活动文档）。若删的是当前文档，先关闭连接再切换。
@@ -163,6 +168,10 @@ pub fn delete_document(state: State<'_, AppState>, id: String) -> AppResult<DocI
         idx.last_opened = Some(cur.id.clone());
         state.docs.set_last_opened(&cur.id)?;
     }
+    // 进回收站 = 该文档全部完成记录从总览移除；恢复后会自动回来。
+    if let Err(err) = state.stats.sync_all() {
+        eprintln!("移入回收站后同步总览失败: {err}");
+    }
     Ok(idx)
 }
 
@@ -176,9 +185,14 @@ pub fn switch_document(state: State<'_, AppState>, id: String) -> AppResult<()> 
     if cur.id == id {
         return Ok(());
     }
-    *cur = CurrentDoc { id: id.clone(), db: new_db };
+    *cur = CurrentDoc {
+        id: id.clone(),
+        db: new_db,
+    };
     state.history.lock().expect("history mutex poisoned").clear();
     state.docs.set_last_opened(&id)?;
+    // 后台巡检只盯当前文档：切过来先告诉统计服务（docs/10 §4.7）。
+    state.stats.set_current(&id);
     Ok(())
 }
 

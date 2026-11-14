@@ -5,12 +5,13 @@ import {
   Download,
   Eye,
   EyeOff,
+  FileText,
   Keyboard,
   MoreHorizontal,
   Search,
 } from 'lucide-react';
 
-import { useTodoStore } from '../stores/todoStore';
+import { DOC_VIEWS, useTodoStore } from '../stores/todoStore';
 import { useRunStore } from '../stores/runStore';
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -42,6 +43,7 @@ const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string }
       { keys: [IS_MAC ? '⌘' : 'Ctrl', '1'], label: '树形视图' },
       { keys: [IS_MAC ? '⌘' : 'Ctrl', '2'], label: '平铺视图' },
       { keys: [IS_MAC ? '⌘' : 'Ctrl', '3'], label: '统计视图' },
+      { keys: [IS_MAC ? '⌘' : 'Ctrl', '4'], label: '总览' },
       { keys: [IS_MAC ? '⌘' : 'Ctrl', 'F'], label: '搜索' },
       { keys: ['⇧', '1'], label: '适应视图' },
       { keys: ['Space', '拖拽'], label: '平移画布' },
@@ -99,6 +101,9 @@ export function TopBar() {
   };
 
   const currentDoc = documents.find(d => d.id === currentDocId) ?? null;
+  const isDocView = (DOC_VIEWS as readonly string[]).includes(viewMode);
+  const globalTitle =
+    viewMode === 'overview' ? '总览' : viewMode === 'trash' ? '回收站' : viewMode === 'settings' ? '设置' : '';
 
   const tab = (active: boolean) =>
     [
@@ -114,17 +119,33 @@ export function TopBar() {
 
   return (
     <header className="relative z-30 flex items-center gap-3 h-12 px-4 border-b border-border bg-surface shrink-0">
-      <nav className="flex items-center gap-0.5 p-0.5 rounded-lg bg-base border border-border">
-        <button className={tab(viewMode === 'tree')} onClick={() => setViewMode('tree')} title="树形视图 (Ctrl+1)">
-          树形
-        </button>
-        <button className={tab(viewMode === 'flat')} onClick={() => setViewMode('flat')} title="平铺视图 (Ctrl+2)">
-          平铺
-        </button>
-        <button className={tab(viewMode === 'stats')} onClick={() => setViewMode('stats')} title="统计视图 (Ctrl+3)">
-          统计
-        </button>
-      </nav>
+      {isDocView ? (
+        <>
+          {/* 文档名 = 作用域提示：右边三个 tab 都属于这份文档，不是全局统计 */}
+          {currentDoc && (
+            <div
+              className="flex items-center gap-1.5 min-w-0 max-w-[160px] text-[13px] text-muted select-none"
+              title={currentDoc.name}
+            >
+              <FileText className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{currentDoc.name}</span>
+            </div>
+          )}
+          <nav className="flex items-center gap-0.5 p-0.5 rounded-lg bg-base border border-border">
+            <button className={tab(viewMode === 'tree')} onClick={() => setViewMode('tree')} title="树形视图 (Ctrl+1)">
+              树形
+            </button>
+            <button className={tab(viewMode === 'flat')} onClick={() => setViewMode('flat')} title="平铺视图 (Ctrl+2)">
+              平铺
+            </button>
+            <button className={tab(viewMode === 'stats')} onClick={() => setViewMode('stats')} title="统计视图 (Ctrl+3)">
+              统计
+            </button>
+          </nav>
+        </>
+      ) : (
+        <div className="text-[14px] font-medium text-primary select-none">{globalTitle}</div>
+      )}
 
       <div className="flex-1" />
 

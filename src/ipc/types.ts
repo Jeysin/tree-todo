@@ -215,3 +215,53 @@ export interface ImportResult {
   folderIds: string[];
   firstDocumentId: string | null;
 }
+
+// ── 总览 / 日历热力图（docs/10）──
+
+/** 统计范围：全部活动文档 / 某个目录子树 / 某份文档（回收站永不计入）。 */
+export type OverviewScope =
+  | { kind: 'all' }
+  | { kind: 'folder'; folderId: string }
+  | { kind: 'document'; docId: string };
+
+export interface OverviewQuery {
+  /** 含端点，YYYY-MM-DD（前端按「近 12 个月 / 自然年」算好）。 */
+  startDate: string;
+  endDate: string;
+  scope: OverviewScope;
+}
+
+export interface DayCount {
+  /** YYYY-MM-DD */
+  date: string;
+  leafDone: number;
+}
+
+export interface OverviewResponse {
+  /** 已补齐 0 值，按日期升序。 */
+  days: DayCount[];
+  totalLeafDone: number;
+  activeDays: number;
+  currentStreak: number;
+  longestStreak: number;
+  todayLeafDone: number;
+  syncedDocs: number;
+  skippedDocs: number;
+  /** 启动全量对账尚未完成。 */
+  stale: boolean;
+  generatedAt: string;
+}
+
+export interface DayDetailItem {
+  docId: string;
+  docName: string;
+  nodeId: string;
+  content: string;
+  /** UTC RFC3339，前端本地化展示。 */
+  completedAt: string;
+}
+
+export interface RebuildResult {
+  docs: number;
+  ms: number;
+}

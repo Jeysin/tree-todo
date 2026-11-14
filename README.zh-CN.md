@@ -360,7 +360,7 @@ pnpm tauri build    # 打包当前平台的安装包
 | Windows | `%APPDATA%\com.jeysin.treetodo\` |
 
 目录里 `documents.json` 是文档索引，`docs/<id>.db` 是每个文档的数据，`trash/` 是回收站，
-`mcp.json` 是 MCP 服务的端口与 token。
+`mcp.json` 是 MCP 服务的端口与 token，`global.db` 是可随时重建的全局统计（热力图）聚合。
 
 ## 快捷键
 
@@ -372,7 +372,7 @@ macOS 用 `⌘`，Windows 用 `Ctrl`。
 | 新建同级任务 | `Enter` | 编辑节点 | `F2` / 双击 |
 | 完成 / 取消完成 | `S` | 删除节点 | `Delete` |
 | 撤销 / 重做 | `⌘Z` / `⇧⌘Z` | 搜索 | `⌘F` |
-| 树形 / 平铺 / 统计 | `⌘1` / `⌘2` / `⌘3` | 适应视图 | `⇧1` |
+| 树形 / 平铺 / 统计 / 总览 | `⌘1` / `⌘2` / `⌘3` / `⌘4` | 适应视图 | `⇧1` |
 | 折叠 / 展开节点 | `⌘.` / `⌘,` | 同级上移 / 下移 | `Alt+↑` / `Alt+↓` |
 | 复制 Prompt | `⌘⇧C` | 复制 Prompt（带回执） | `⌘⇧R` |
 | 复制节点（含子树） | `⌘C` | 粘贴为子节点 | `⌘V` |
@@ -395,6 +395,7 @@ src/                  React 前端
   views/tree/         树形（脑图）视图
   views/flat/         平铺视图
   views/stats/        统计视图
+  views/overview/     总览（日历热力图）
   views/trash/        回收站
   stores/             Zustand（只存渲染快照）
   ipc/                Tauri command 的唯一 TS 出口

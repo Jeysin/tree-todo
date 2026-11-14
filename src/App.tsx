@@ -8,10 +8,12 @@ import { TopBar } from './components/TopBar';
 import { NodeDetailPanel } from './components/NodeDetailPanel';
 import { RunDrawer } from './components/RunDrawer';
 import { UpdateDialog } from './components/UpdateDialog';
+import { useOverviewStore } from './stores/overviewStore';
 import { initRunEvents, useRunStore } from './stores/runStore';
 import { useTodoStore } from './stores/todoStore';
 import { useUpdateStore } from './stores/updateStore';
 import { FlatView } from './views/flat/FlatView';
+import { OverviewView } from './views/overview/OverviewView';
 import { SettingsView } from './views/settings/SettingsView';
 import { StatsView } from './views/stats/StatsView';
 import { TrashView } from './views/trash/TrashView';
@@ -34,7 +36,16 @@ function App() {
     void loadTree();
     void loadTrash();
     void refreshClipboard();
+    void useOverviewStore.getState().refreshToday();
   }, [loadDocuments, loadTree, loadTrash, refreshClipboard]);
+
+  // 侧栏「今日完成」徽标：启动对账可能稍晚完成，30s 轮询兜底；跨零点也会自动归零。
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void useOverviewStore.getState().refreshToday();
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // 运行事件监听（只注册一次；run:status 由 MCP 回执 / 验收 / 收口推送）
   useEffect(() => {
@@ -93,6 +104,9 @@ function App() {
       } else if (key === '3') {
         e.preventDefault();
         setViewMode('stats');
+      } else if (key === '4') {
+        e.preventDefault();
+        setViewMode('overview');
       } else if (key === ',') {
         e.preventDefault();
         setViewMode('settings');
@@ -162,10 +176,11 @@ function App() {
             {viewMode === 'tree' && <MindMapView />}
             {viewMode === 'flat' && <FlatView />}
             {viewMode === 'stats' && <StatsView />}
+            {viewMode === 'overview' && <OverviewView />}
             {viewMode === 'trash' && <TrashView />}
             {viewMode === 'settings' && <SettingsView />}
-            {viewMode !== 'settings' && <NodeDetailPanel />}
-            {viewMode !== 'settings' && <RunDrawer />}
+            {viewMode !== 'settings' && viewMode !== 'overview' && <NodeDetailPanel />}
+            {viewMode !== 'settings' && viewMode !== 'overview' && <RunDrawer />}
           </main>
           <StatusBar />
         </div>

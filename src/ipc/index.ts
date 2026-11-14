@@ -17,10 +17,15 @@ import type {
   FolderMeta,
   ImportResult,
   McpConfig,
+  OverviewQuery,
+  OverviewResponse,
   PasteResult,
+  RebuildResult,
   RunView,
   TodoNode,
   TrashItem,
+  DayDetailItem,
+  OverviewScope,
 } from './types';
 
 export const ipc = {
@@ -157,4 +162,16 @@ export const ipc = {
   getMcpConfig: (): Promise<McpConfig> => invoke('get_mcp_config'),
   /** 重置 MCP token（重置后需更新 Agent 侧配置）。 */
   resetMcpToken: (): Promise<McpConfig> => invoke('reset_mcp_token'),
+
+  // ── 总览 / 日历热力图（docs/10）──
+  /** 聚合查询：天数补齐 0 值 + KPI + 连续天数。 */
+  getOverview: (query: OverviewQuery): Promise<OverviewResponse> =>
+    invoke('get_overview', { query }),
+  /** 某天的完成明细（只含当前仍存在的叶子）。 */
+  getOverviewDay: (date: string, scope: OverviewScope): Promise<DayDetailItem[]> =>
+    invoke('get_overview_day', { date, scope }),
+  /** 今天的叶子完成数（侧栏徽标）。 */
+  getOverviewToday: (): Promise<number> => invoke('get_overview_today'),
+  /** 手动全量重建统计（设置页 / 排查用）。 */
+  rebuildOverview: (): Promise<RebuildResult> => invoke('rebuild_overview'),
 };

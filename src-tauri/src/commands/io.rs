@@ -190,6 +190,7 @@ pub fn import_bundle(
                 nodes: old.nodes,
             },
         )?;
+        state.stats.mark_dirty(&id);
         return Ok(ImportResult {
             document_ids: vec![id.clone()],
             folder_ids: Vec::new(),
@@ -246,6 +247,10 @@ pub fn import_bundle(
                 "未知的导出类型: {other}"
             )))
         }
+    }
+    // 导入的文档带 done 节点：首次统计需要重算（按各自 completed_at 归历史）。
+    for id in &result.document_ids {
+        state.stats.mark_dirty(id);
     }
     Ok(result)
 }

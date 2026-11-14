@@ -8,14 +8,17 @@ mod clipboard;
 mod commands;
 mod db;
 mod error;
+mod global_db;
 mod history;
 mod model;
 mod propagate;
 mod runtime;
+mod stats;
 mod storage;
 
 use db::Db;
 use history::History;
+use stats::StatsService;
 use storage::DocStore;
 
 /// 原生菜单里 File 菜单项的 id（前端监听事件做实际导出/导入）。
@@ -109,6 +112,8 @@ pub struct AppState {
     pub clipboard: Mutex<Option<clipboard::Clipboard>>,
     /// 本地回执服务 + 运行映射（docs/06 §6.3）。
     pub runtime: Arc<runtime::RuntimeState>,
+    /// 全局统计（docs/10）：热力图数据，派生自各文档库，可随时重建。
+    pub stats: Arc<StatsService>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -162,6 +167,18 @@ pub fn run() {
             db::exec::reconcile(&db.conn)?;
             let runtime = runtime::start(app.handle().clone(), data_dir)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+            // 全局统计（docs/10）：派生数据，初始化失败不阻止应用启动，降级到内存库。
+            let stats = match StatsService::new(docs.clone()) {
+                Ok(service) => service,
+                Err(err) => {
+                    eprintln!("全局统计服务初始化失败，降级为内存库: {err}");
+                    StatsService::in_memory(docs.clone())
+                        .map_err(|e| std::io::Error::other(e.to_string()))?
+                }
+            };
+            stats.set_current(&current_id);
+
             app.manage(AppState {
                 current: Mutex::new(CurrentDoc {
                     id: current_id,
@@ -171,13 +188,25 @@ pub fn run() {
                 docs,
                 clipboard: Mutex::new(None),
                 runtime,
+                stats: Arc::clone(&stats),
             });
 
-            // 后台补齐其余文档的迁移（docs/06 §7.6）。
-            // 当前文档已在上面同步迁移完成；其余文档在后台逐个迁移，
-            // 用户切到哪个文档时就已经是新版，不用等。
+            // 后台补齐其余文档的迁移（docs/06 §7.6），完成后再做统计全量对账。
+            // 顺序很重要：迁移会补齐 completed_at 等列，统计服务不能抢在它前面读旧 schema。
             let docs2 = app.state::<AppState>().docs.clone();
-            std::thread::spawn(move || migrate_remaining(&docs2));
+            let stats2 = Arc::clone(&stats);
+            std::thread::spawn(move || {
+                migrate_remaining(&docs2);
+                match stats2.sync_all() {
+                    Ok(summary) => eprintln!(
+                        "全局统计对账完成：{} 个文档，跳过 {} 个",
+                        summary.synced, summary.skipped
+                    ),
+                    Err(err) => eprintln!("全局统计对账失败: {err}"),
+                }
+                stats2.mark_initial_sync_done();
+            });
+            stats.start();
 
             // 24h 过期收口线程（docs/06 v2 D32）：每小时扫一遍所有文档，
             // dispatched 超过 24h 的 run 收口为 cancelled·expired（无节点投影，无需通知）。
@@ -239,6 +268,10 @@ pub fn run() {
             commands::copy_text,
             commands::get_mcp_config,
             commands::reset_mcp_token,
+            commands::get_overview,
+            commands::get_overview_day,
+            commands::get_overview_today,
+            commands::rebuild_overview,
         ])
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_EXPORT_ALL => {

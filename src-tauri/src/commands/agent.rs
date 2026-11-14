@@ -295,6 +295,7 @@ pub fn accept_run(
     node_ids: Vec<String>,
 ) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let before = before_of(&doc.db.conn, &node_ids)?;
     let tx = doc.db.conn.transaction()?;
     let mut history = state.history.lock().expect("history mutex poisoned");
@@ -319,6 +320,7 @@ pub fn accept_run(
     })?;
     tx.commit()?;
     drop(doc);
+    state.stats.mark_dirty(&doc_id);
     let _ = app.emit("run:status", serde_json::json!({ "runId": run_id, "reason": "accepted" }));
     Ok(affected)
 }
@@ -362,6 +364,7 @@ pub fn accept_node(
     node_id: String,
 ) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let node = queries::get_node(&doc.db.conn, &node_id)?;
     let mut before = vec![node.clone()];
     before.extend(queries::ancestors(&doc.db.conn, node.parent_id.as_deref())?);
@@ -377,6 +380,7 @@ pub fn accept_node(
         Ok(Affected { upserted, removed: Vec::new() })
     })?;
     tx.commit()?;
+    state.stats.mark_dirty(&doc_id);
     let _ = app.emit("run:status", serde_json::json!({ "runId": "", "reason": "accepted-node" }));
     Ok(affected)
 }

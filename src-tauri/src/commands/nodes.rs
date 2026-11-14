@@ -36,6 +36,7 @@ pub fn create_node(
     position: Option<f64>,
 ) -> AppResult<CreateResult> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let tx = doc.db.conn.transaction()?;
     if let Some(pid) = parent_id.as_deref() {
         let _ = queries::get_node(&tx, pid)?; // 父不存在 → NodeNotFound
@@ -57,6 +58,7 @@ pub fn create_node(
         })
     })?;
     tx.commit()?;
+    state.stats.mark_dirty(&doc_id);
     Ok(CreateResult {
         new_id,
         upserted: affected.upserted,
@@ -71,6 +73,7 @@ pub fn update_content(
     content: String,
 ) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let tx = doc.db.conn.transaction()?;
     let before = vec![queries::get_node(&tx, &id)?];
     let mut history = state.history.lock().expect("history mutex poisoned");
@@ -82,6 +85,7 @@ pub fn update_content(
         })
     })?;
     tx.commit()?;
+    state.stats.mark_dirty(&doc_id);
     Ok(affected)
 }
 
@@ -89,6 +93,7 @@ pub fn update_content(
 #[tauri::command]
 pub fn update_note(state: State<'_, AppState>, id: String, note: String) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let tx = doc.db.conn.transaction()?;
     let before = vec![queries::get_node(&tx, &id)?];
     let mut history = state.history.lock().expect("history mutex poisoned");
@@ -100,6 +105,7 @@ pub fn update_note(state: State<'_, AppState>, id: String, note: String) -> AppR
         })
     })?;
     tx.commit()?;
+    state.stats.mark_dirty(&doc_id);
     Ok(affected)
 }
 
@@ -107,6 +113,7 @@ pub fn update_note(state: State<'_, AppState>, id: String, note: String) -> AppR
 #[tauri::command]
 pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
     let mut before = queries::subtree_nodes(&tx, &id)?;
@@ -133,6 +140,7 @@ pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affect
         })
     })?;
     tx.commit()?;
+    state.stats.mark_dirty(&doc_id);
     Ok(affected)
 }
 
@@ -140,6 +148,7 @@ pub fn toggle_status(state: State<'_, AppState>, id: String) -> AppResult<Affect
 #[tauri::command]
 pub fn delete_node(state: State<'_, AppState>, id: String) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
     if node.parent_id.is_none() {
@@ -169,6 +178,7 @@ pub fn delete_node(state: State<'_, AppState>, id: String) -> AppResult<Affected
         Ok(Affected { upserted, removed })
     })?;
     tx.commit()?;
+    state.stats.mark_dirty(&doc_id);
     Ok(affected)
 }
 
@@ -181,6 +191,7 @@ pub fn move_node(
     position: Option<f64>,
 ) -> AppResult<Affected> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let tx = doc.db.conn.transaction()?;
     let node = queries::get_node(&tx, &id)?;
     if node.parent_id.is_none() || new_parent_id.is_none() {
@@ -207,6 +218,7 @@ pub fn move_node(
         })
     })?;
     tx.commit()?;
+    state.stats.mark_dirty(&doc_id);
     Ok(affected)
 }
 
@@ -266,10 +278,14 @@ pub fn collapse_all(state: State<'_, AppState>, collapsed: bool) -> AppResult<Af
 #[tauri::command]
 pub fn undo(state: State<'_, AppState>) -> AppResult<Option<Affected>> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let tx = doc.db.conn.transaction()?;
     let mut history = state.history.lock().expect("history mutex poisoned");
     let patch = history::undo(&tx, &mut history)?;
     tx.commit()?;
+    if patch.is_some() {
+        state.stats.mark_dirty(&doc_id);
+    }
     Ok(patch)
 }
 
@@ -277,10 +293,14 @@ pub fn undo(state: State<'_, AppState>) -> AppResult<Option<Affected>> {
 #[tauri::command]
 pub fn redo(state: State<'_, AppState>) -> AppResult<Option<Affected>> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let tx = doc.db.conn.transaction()?;
     let mut history = state.history.lock().expect("history mutex poisoned");
     let patch = history::redo(&tx, &mut history)?;
     tx.commit()?;
+    if patch.is_some() {
+        state.stats.mark_dirty(&doc_id);
+    }
     Ok(patch)
 }
 
@@ -329,6 +349,7 @@ pub fn clipboard_info(state: State<'_, AppState>) -> AppResult<Option<ClipboardI
 #[tauri::command]
 pub fn paste_nodes(state: State<'_, AppState>, parent_id: String) -> AppResult<PasteResult> {
     let mut doc = state.current.lock().expect("current doc mutex poisoned");
+    let doc_id = doc.id.clone();
     let clip = state
         .clipboard
         .lock()
@@ -370,5 +391,6 @@ pub fn paste_nodes(state: State<'_, AppState>, parent_id: String) -> AppResult<P
         })
     })?;
     tx.commit()?;
+    state.stats.mark_dirty(&doc_id);
     Ok(PasteResult { new_ids, affected })
 }

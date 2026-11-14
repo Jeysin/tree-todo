@@ -13,6 +13,12 @@
   --success: #16a34a;
   --warning: #d97706;
   --border-color: #e2e5ea;
+  /* 日历热力图色阶（docs/10 §7.3）：0 = 无完成 / 占位，4 = 最多 */
+  --heat-0: #ebedf0;
+  --heat-1: #9be9a8;
+  --heat-2: #40c463;
+  --heat-3: #30a14e;
+  --heat-4: #216e39;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,6 +32,11 @@
     --success: #3ecf8e;
     --warning: #f5a623;
     --border-color: #2e3440;
+    --heat-0: #2d333b;
+    --heat-1: #0e4429;
+    --heat-2: #006d32;
+    --heat-3: #26a641;
+    --heat-4: #39d353;
   }
 }
 
@@ -40,6 +51,11 @@
   --success: #16a34a;
   --warning: #d97706;
   --border-color: #e2e5ea;
+  --heat-0: #ebedf0;
+  --heat-1: #9be9a8;
+  --heat-2: #40c463;
+  --heat-3: #30a14e;
+  --heat-4: #216e39;
 }
 
 /* 显式深色（覆盖系统浅色） */
@@ -53,6 +69,11 @@
   --success: #3ecf8e;
   --warning: #f5a623;
   --border-color: #2e3440;
+  --heat-0: #2d333b;
+  --heat-1: #0e4429;
+  --heat-2: #006d32;
+  --heat-3: #26a641;
+  --heat-4: #39d353;
 }
 
 @theme inline {
@@ -65,6 +86,11 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-border: var(--border-color);
+  --color-heat-0: var(--heat-0);
+  --color-heat-1: var(--heat-1);
+  --color-heat-2: var(--heat-2);
+  --color-heat-3: var(--heat-3);
+  --color-heat-4: var(--heat-4);
 
   --font-sans: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC",
     sans-serif;

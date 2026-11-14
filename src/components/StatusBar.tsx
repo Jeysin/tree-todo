@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Maximize, Minus, Plus } from 'lucide-react';
 
+import { useOverviewStore } from '../stores/overviewStore';
 import { useTodoStore } from '../stores/todoStore';
 import { mindMapFit, mindMapZoomIn, mindMapZoomOut } from '../views/tree/mindmapApi';
 
@@ -32,6 +33,7 @@ export function StatusBar() {
   const nodes = useTodoStore(s => s.nodes);
   const childrenOf = useTodoStore(s => s.childrenOf);
   const viewMode = useTodoStore(s => s.viewMode);
+  const overview = useOverviewStore(s => s.response);
 
   const stats = useMemo(() => {
     let pending = 0;
@@ -50,6 +52,30 @@ export function StatusBar() {
     const total = pending + done;
     return { pending, done, running, awaiting, rate: total === 0 ? 0 : Math.round((done / total) * 100) };
   }, [nodes, childrenOf]);
+
+  // 全局层：显示全局摘要，避免把文档级数字带进总览造成新的语义错乱。
+  if (viewMode === 'overview') {
+    const synced = overview?.syncedDocs ?? 0;
+    const skipped = overview?.skippedDocs ?? 0;
+    return (
+      <footer className="flex items-center justify-between h-9 px-4 border-t border-border bg-surface text-xs text-muted shrink-0">
+        <span className="select-none flex items-center gap-1.5">
+          总览
+          <span className="text-border">·</span>
+          <b className="font-semibold text-primary tabular-nums">{synced}</b> 个文档
+          <span className="text-border">·</span>
+          {overview?.stale ? '正在同步…' : '已同步'}
+          {skipped > 0 && (
+            <>
+              <span className="text-border">·</span>
+              <span className="text-warning">{skipped} 个文档暂时无法读取</span>
+            </>
+          )}
+        </span>
+        <span className="select-none">不含回收站 · 按本地 00:00 分日</span>
+      </footer>
+    );
+  }
 
   return (
     <footer className="flex items-center justify-between h-9 px-4 border-t border-border bg-surface text-xs text-muted shrink-0">

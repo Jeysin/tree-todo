@@ -361,7 +361,8 @@ The first build takes 3–10 minutes (all Rust dependencies from scratch); incre
 | Windows | `%APPDATA%\com.jeysin.treetodo\` |
 
 Inside: `documents.json` is the document index, `docs/<id>.db` holds each document's data, `trash/` is the Trash,
-and `mcp.json` stores the MCP service's port and token.
+`mcp.json` stores the MCP service's port and token, and `global.db` holds the rebuildable aggregate behind the
+calendar heatmap.
 
 ## Keyboard shortcuts
 
@@ -373,7 +374,7 @@ Use `⌘` on macOS and `Ctrl` on Windows.
 | New sibling task | `Enter` | Edit node | `F2` / double-click |
 | Complete / uncomplete | `S` | Delete node | `Delete` |
 | Undo / redo | `⌘Z` / `⇧⌘Z` | Search | `⌘F` |
-| Tree / Flat / Stats | `⌘1` / `⌘2` / `⌘3` | Fit to view | `⇧1` |
+| Tree / Flat / Stats / Overview | `⌘1` / `⌘2` / `⌘3` / `⌘4` | Fit to view | `⇧1` |
 | Collapse / expand node | `⌘.` / `⌘,` | Move sibling up / down | `Alt+↑` / `Alt+↓` |
 | Copy Prompt | `⌘⇧C` | Copy Prompt (with receipt) | `⌘⇧R` |
 | Copy node (with subtree) | `⌘C` | Paste as child node | `⌘V` |
@@ -396,6 +397,7 @@ src/                  React frontend
   views/tree/         Tree (mind-map) view
   views/flat/         Flat view
   views/stats/        Stats view
+  views/overview/     Overview (calendar heatmap)
   views/trash/        Trash
   stores/             Zustand (render snapshots only)
   ipc/                The single TS gateway for Tauri commands

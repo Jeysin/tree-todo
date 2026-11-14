@@ -53,6 +53,23 @@ CREATE INDEX idx_nodes_deleted ON nodes(deleted_at);
 > **查询铁律**：所有「视图查询」必须过滤 `deleted_at IS NULL`。v0.4 起节点删除是物理删除，该字段恒为 NULL；回收站只包含被删除的**文档**。
 > `completed_at` 由 `update_status` 与级联 SQL 统一维护（done → now，pending → NULL），不得手工赋值。
 
+**全局派生库（v2.2，独立文件 `global.db`，不改变文档库 schema）**：
+
+```sql
+-- app_data_dir/global.db；与文档库版本解耦（GLOBAL_SCHEMA = 1）
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE doc_sync (
+    doc_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
+    synced_at TEXT NOT NULL, state TEXT NOT NULL, note TEXT
+) WITHOUT ROWID;
+CREATE TABLE leaf_done_daily (
+    doc_id TEXT NOT NULL, local_date TEXT NOT NULL,
+    leaf_count INTEGER NOT NULL, PRIMARY KEY (doc_id, local_date)
+) WITHOUT ROWID;
+```
+
+约束（红线第 11 条）：**只存能从文档库重算的派生数据**，删掉文件后启动自动重建。文档库仍是唯一真相源；同步失效只会让数字短暂偏旧，不会写坏文档数据。详见 `10-calendar-heatmap-design.md` §4。
+
 ### 1.3 字段设计说明
 
 | 字段 | 设计要点 |
@@ -173,6 +190,21 @@ stateDiagram-v2
 - **跨文档**：切换文档只清撤销历史、不清剪贴板，所以「文档 A 复制 → 切到文档 B 粘贴」是同一套流程；源文档随后被删除或移入回收站也不影响，因为快照已脱离数据库。应用退出后剪贴板失效。
 - 实现位于 `src-tauri/src/clipboard.rs`（纯数据逻辑 + 单测）与 `commands/nodes.rs`（事务编排）；前端只负责把 `newIds` 选中并把受影响快照合入渲染树。
 
+### 2.7 计数口径（v2.2 统一）
+
+| 概念 | 定义 |
+|---|---|
+| 任务总数 | **叶子节点数**（无子节点的节点） |
+| 已完成任务数 | `status = 'done'` 的**叶子**节点数 |
+| 完成率 | 已完成叶子 / 叶子总数 |
+| 某日完成数（热力图） | 该日（本地 00:00 分界）完成、**且此刻仍是已完成叶子**的节点数 |
+
+三条硬约束：
+
+1. 父节点的 `status` 只是聚合展示（I2），**不进入任何计数**；M2 级联 = 「把该分类下的叶子全部标记完成」，不改变任务总数。
+2. 所有出口（平铺、状态栏、统计页、总览、导出摘要、通知）用同一口径，禁止出现第二套算法。
+3. 热力图只统计**活动文档**：文档移入回收站时其全部日期从聚合中移除，恢复后重新计入（`10-calendar-heatmap-design.md` 决策 3）。
+
 ## 3. 根节点形态决策（D3）
 
 **采用单根**：
@@ -190,6 +222,7 @@ stateDiagram-v2
 | Schema 迁移 | 启动时 | 读 `schema_version`，逐版本执行迁移脚本（v0.1 → 1，预留迁移框架） |
 | position 重排 | 写操作后惰性触发 | 同级 `position` 差值小于阈值（如 1e-6）时，对该组一次性重排（步长 1024） |
 | 数据备份 | — | v0.5 起**移除自动备份**：备份统一走 §5 的导出 / 导入（用户主动、可异地保存） |
+| 全局统计对账 | 启动 / 文档增删恢复 / 查询前 | 按文档库指纹 `count:done:max(updated_at)` 判断是否需重算；对账时清理不在活动文档集合里的聚合行（回收站不计入） |
 
 ## 5. 导入 / 导出（v0.5：以文档 / 目录 / 全部为单位）
 

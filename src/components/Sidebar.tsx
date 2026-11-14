@@ -4,6 +4,10 @@
  * - 拖拽调整同级顺序、拖进 / 拖出目录，拖到空白处回到根层级末尾；
  * - 右键菜单：新建、导出、导入、重命名、删除；空白处右键可新建；
  * - 宽度可拖拽并记忆（localStorage）。
+ *
+ * 选中态只有一处事实来源（docs/10 §3.4）：页面级高亮 = viewMode（总览 / 回收站 / 设置
+ * 由导航区与工具区负责）；文档层的文档高亮直接由 currentDocId 推导，不另存状态；
+ * selectedFolderId 只表示「+」的新建落点，与页面级高亮互斥。两者不可能同时为真。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirm } from '@tauri-apps/plugin-dialog';
@@ -16,6 +20,7 @@ import {
   FolderInput,
   FolderOpen,
   FolderPlus,
+  LayoutDashboard,
   Loader2,
   Pencil,
   Plus,
@@ -26,7 +31,9 @@ import {
 
 import { AppIcon } from './AppIcon';
 import { ipc } from '../ipc';
-import { useTodoStore } from '../stores/todoStore';
+import { compareDocSiblings as compareSiblings } from '../lib/docTree';
+import { useOverviewStore } from '../stores/overviewStore';
+import { isDocViewMode, useTodoStore } from '../stores/todoStore';
 import { useUpdateStore } from '../stores/updateStore';
 import type { DocMeta, FolderMeta } from '../ipc/types';
 
@@ -92,22 +99,8 @@ interface Editing {
   id: string;
 }
 
-/** 侧边栏选中项：目录选中决定「+」的落点，文档选中即当前打开的文档。 */
-type Selection = { kind: ItemKind; id: string } | null;
-
 const NEW_DOC_NAME = '未命名文档';
 const NEW_FOLDER_NAME = '未命名目录';
-
-/** 同级排序：先按 position，冲突（旧数据）时目录在前、再按创建时间与名称。 */
-function compareSiblings(
-  a: { kind: ItemKind; position: number; createdAt: string; name: string },
-  b: { kind: ItemKind; position: number; createdAt: string; name: string },
-): number {
-  if (a.position !== b.position) return a.position - b.position;
-  if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
-  if (a.createdAt !== b.createdAt) return a.createdAt.localeCompare(b.createdAt);
-  return a.name.localeCompare(b.name);
-}
 
 export function Sidebar() {
   const documents = useTodoStore(s => s.documents);
@@ -128,6 +121,8 @@ export function Sidebar() {
   const exportFolder = useTodoStore(s => s.exportFolder);
   const importBundle = useTodoStore(s => s.importBundle);
   const setViewMode = useTodoStore(s => s.setViewMode);
+  const lastDocView = useTodoStore(s => s.lastDocView);
+  const todayDone = useOverviewStore(s => s.today);
   const updatePhase = useUpdateStore(s => s.phase);
   const checkUpdate = useUpdateStore(s => s.check);
 
@@ -137,8 +132,8 @@ export function Sidebar() {
   const [draftName, setDraftName] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
-  /** 侧边栏里当前选中的目录或文档（单击切换，互斥）。 */
-  const [selection, setSelection] = useState<Selection>(null);
+  /** 侧边栏里选中的目录（= 「+」的新建落点；不表示页面，页面高亮由 viewMode 决定）。 */
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [addMenu, setAddMenu] = useState(false);
   /** 拖拽源 / 当前落点（指针拖拽，用于排序与换目录）。 */
   const [drag, setDrag] = useState<{ kind: ItemKind; id: string } | null>(null);
@@ -258,25 +253,32 @@ export function Sidebar() {
   }, []);
 
   const currentDoc = documents.find(d => d.id === currentDocId) ?? null;
-  const addTargetId =
-    selection?.kind === 'folder' ? selection.id : (currentDoc?.folderId ?? null);
+  /** 是否停在文档层（tree / flat / stats）——决定树里是否该有行高亮。 */
+  const inDocLayer = isDocViewMode(viewMode);
+  const addTargetId = selectedFolderId ?? currentDoc?.folderId ?? null;
   const addTargetName = addTargetId
     ? (folders.find(f => f.id === addTargetId)?.name ?? '根目录')
     : '根目录';
 
-  // 当前文档变化时（切换 / 新建 / 导入），文档选中项跟着走；目录选中保持不动。
-  useEffect(() => {
-    if (!currentDocId) return;
-    setSelection(prev =>
-      prev?.kind === 'folder' ? prev : { kind: 'doc', id: currentDocId },
-    );
-  }, [currentDocId]);
-
   // 选中的目录被删掉后清空选中，避免「+」指向不存在的目录。
   useEffect(() => {
-    if (selection?.kind !== 'folder') return;
-    if (!folders.some(f => f.id === selection.id)) setSelection(null);
-  }, [folders, selection]);
+    if (!selectedFolderId) return;
+    if (!folders.some(f => f.id === selectedFolderId)) setSelectedFolderId(null);
+  }, [folders, selectedFolderId]);
+
+  // 进入全局层（总览 / 回收站 / 设置）时清掉目录选中：
+  // 树上不再有任何行高亮，视觉上只留导航区那一个「当前页」。
+  useEffect(() => {
+    if (!inDocLayer) setSelectedFolderId(null);
+  }, [inDocLayer]);
+
+  /**
+   * 在全局层里操作文档树（点目录 / 新建目录）时先回到文档层：
+   * 树上的「选中」只在文档层可见，留在总览页点目录会得到一个看不见的「+」落点。
+   */
+  const ensureDocLayer = () => {
+    if (!inDocLayer) setViewMode(lastDocView);
+  };
 
   /** 移动目标：目录不能移进自己或自己的子孙。 */
   const moveTargets = useMemo(() => {
@@ -421,7 +423,8 @@ export function Sidebar() {
     const meta = await createFolder(NEW_FOLDER_NAME, parentId);
     if (!meta) return;
     if (parentId) expandFolder(parentId);
-    setSelection({ kind: 'folder', id: meta.id });
+    setSelectedFolderId(meta.id);
+    ensureDocLayer();
     beginNewName('folder', meta.id);
   };
 
@@ -430,7 +433,8 @@ export function Sidebar() {
     if (folderId) expandFolder(folderId);
     void createDocument(NEW_DOC_NAME, folderId).then(id => {
       if (!id) return;
-      setSelection({ kind: 'doc', id });
+      // 新文档会成为当前文档，目录落点让位给文档高亮。
+      setSelectedFolderId(null);
       beginNewName('doc', id);
     });
   };
@@ -764,6 +768,38 @@ export function Sidebar() {
         )}
       </div>
 
+      {/* 导航区（docs/10 §3.4）：全局层入口常驻，与下方文档树用分隔线隔开 */}
+      <div className="px-2 pt-2 pb-2 border-b border-border/60 shrink-0">
+        <button
+          type="button"
+          onClick={() => setViewMode('overview')}
+          title="总览：全部文档的完成记录 (Ctrl/⌘+4)"
+          aria-current={viewMode === 'overview' ? 'page' : undefined}
+          className={[
+            'group w-full flex items-center gap-2 h-7 px-2 rounded-md text-[13px] transition-colors select-none',
+            viewMode === 'overview'
+              ? 'bg-accent/12 text-primary font-medium'
+              : 'text-muted hover:bg-base hover:text-primary',
+          ].join(' ')}
+        >
+          <LayoutDashboard
+            className={[
+              'w-3.5 h-3.5 shrink-0',
+              viewMode === 'overview' ? 'text-accent' : 'text-muted',
+            ].join(' ')}
+          />
+          <span className="flex-1 text-left">总览</span>
+          {todayDone > 0 && (
+            <span
+              className="min-w-5 h-4 px-1 rounded-full bg-accent/15 text-accent text-[10px] leading-4 text-center tabular-nums"
+              title={`今天完成 ${todayDone} 个叶子任务`}
+            >
+              +{todayDone}
+            </span>
+          )}
+        </button>
+      </div>
+
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto py-2.5 px-2"
@@ -771,7 +807,7 @@ export function Sidebar() {
           if (suppressClickRef.current) return;
           const el = e.target as HTMLElement;
           if (el.closest('[data-sidebar-row]') || el.closest('[data-sidebar-action]')) return;
-          setSelection(null);
+          setSelectedFolderId(null);
         }}
         onContextMenu={e => {
           const el = e.target as HTMLElement;
@@ -833,7 +869,9 @@ export function Sidebar() {
         {tree.map(row => {
           const isEditing = editing?.kind === row.kind && editing.id === row.id;
           const isFolder = row.kind === 'folder';
-          const selected = selection?.kind === row.kind && selection.id === row.id;
+          const selected =
+            inDocLayer &&
+            (isFolder ? row.id === selectedFolderId : !selectedFolderId && row.id === currentDocId);
           const open = isFolder && !collapsed.has(row.id);
           const isDragSource = drag?.kind === row.kind && drag.id === row.id;
           const dropZone =
@@ -853,13 +891,15 @@ export function Sidebar() {
                 if (isEditing || suppressClickRef.current) return;
                 if (isFolder) {
                   // 单击目录 = 选中（「+」的新建落点）；展开/折叠走左侧箭头
-                  setSelection({ kind: 'folder', id: row.id });
+                  setSelectedFolderId(row.id);
+                  ensureDocLayer();
                   return;
                 }
-                // 单击文档 = 选中并打开，同时清掉目录选中
-                setSelection({ kind: 'doc', id: row.id });
+                // 单击文档 = 打开并高亮，同时清掉目录落点
+                setSelectedFolderId(null);
                 if (row.id !== currentDocId) void switchDocument(row.id);
-                else if (viewMode !== 'tree') setViewMode('tree');
+                // 已在同一文档：从全局层（总览 / 回收站 / 设置）回到上次的文档视图
+                else if (viewMode !== lastDocView) setViewMode(lastDocView);
               }}
               onDoubleClick={() => {
                 if (!isEditing) beginRename(row.kind, row.id, row.name);

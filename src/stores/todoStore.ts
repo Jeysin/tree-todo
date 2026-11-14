@@ -19,8 +19,16 @@ import type {
   TodoNode,
   TrashItem,
 } from '../ipc/types';
+import { useOverviewStore } from './overviewStore';
 
-export type ViewMode = 'tree' | 'flat' | 'stats' | 'trash' | 'settings';
+/** 文档层：换个文档就变的视图（顶栏 tab 组）。 */
+export const DOC_VIEWS = ['tree', 'flat', 'stats'] as const;
+/** 全局层：跨全部文档的视图（侧栏导航区）。 */
+export const GLOBAL_VIEWS = ['overview', 'trash', 'settings'] as const;
+
+export type DocView = (typeof DOC_VIEWS)[number];
+export type GlobalView = (typeof GLOBAL_VIEWS)[number];
+export type ViewMode = DocView | GlobalView;
 export type Theme = 'system' | 'light' | 'dark';
 
 /** 平铺视图跳转定位请求（MindMapView 消费后清除）。 */
@@ -44,6 +52,7 @@ export interface CreateRequest {
 }
 
 const THEME_KEY = 'tree-todo.theme';
+const VIEW_STATE_KEY = 'tree-todo.viewState';
 const HIDE_DONE_PREFIX = 'tree-todo.hideDone.';
 
 function applyTheme(t: Theme) {
@@ -61,6 +70,67 @@ function initialTheme(): Theme {
   }
   return 'system';
 }
+
+/**
+ * 启动即应用一次：模块求值早于 React 渲染，这里不写的话
+ * `<html data-theme>` 会一直是空的，重启就退回「跟随系统」。
+ * （index.html 里还有一段等价的防闪屏脚本，key 必须与本文件一致。）
+ */
+const BOOT_THEME = initialTheme();
+applyTheme(BOOT_THEME);
+
+/** 上次停留的页面（docs/10 §3.6）：重启后直接回到这里，而不是固定回文档树。 */
+interface ViewState {
+  viewMode: ViewMode;
+  lastDocView: DocView;
+  previousViewMode: ViewMode;
+}
+
+export function isDocViewMode(value: unknown): value is DocView {
+  return typeof value === 'string' && (DOC_VIEWS as readonly string[]).includes(value);
+}
+
+function isViewMode(value: unknown): value is ViewMode {
+  return (
+    isDocViewMode(value) ||
+    (typeof value === 'string' && (GLOBAL_VIEWS as readonly string[]).includes(value))
+  );
+}
+
+/**
+ * 恢复「最后停留的页面」：在总览 / 统计页关掉窗口的人，下次打开就应该还在那页。
+ * 非法值（更老的版本、手改 localStorage）一律退回文档树，不阻塞启动。
+ */
+function initialViewState(): ViewState {
+  const fallback: ViewState = { viewMode: 'tree', lastDocView: 'tree', previousViewMode: 'tree' };
+  try {
+    const raw = localStorage.getItem(VIEW_STATE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<ViewState>;
+    const viewMode = isViewMode(parsed.viewMode) ? parsed.viewMode : 'tree';
+    return {
+      viewMode,
+      lastDocView: isDocViewMode(parsed.lastDocView)
+        ? parsed.lastDocView
+        : isDocViewMode(viewMode)
+          ? viewMode
+          : 'tree',
+      previousViewMode: isViewMode(parsed.previousViewMode) ? parsed.previousViewMode : viewMode,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function persistViewState(state: ViewState): void {
+  try {
+    localStorage.setItem(VIEW_STATE_KEY, JSON.stringify(state));
+  } catch {
+    /* 忽略持久化失败 */
+  }
+}
+
+const BOOT_VIEW = initialViewState();
 
 /** 「隐藏已完成」按文档记忆：切换文档 / 重启后各自保持。 */
 function readHideDone(docId: string | null): boolean {
@@ -106,6 +176,8 @@ interface TodoState {
 
   // ── 视图状态 ──
   viewMode: ViewMode;
+  /** 上次使用的文档层视图：从总览 / 回收站回到文档时恢复（docs/10 §3.6）。 */
+  lastDocView: DocView;
   /** 进入设置页之前所在的视图（设置页「返回」按钮用）。 */
   previousViewMode: ViewMode;
   theme: Theme;
@@ -215,9 +287,8 @@ export const useTodoStore = create<TodoState>((set, get) => ({
 
   trash: [],
 
-  viewMode: 'tree',
-  previousViewMode: 'tree',
-  theme: initialTheme(),
+  ...BOOT_VIEW,
+  theme: BOOT_THEME,
   selectedId: null,
   selectedIds: [],
   flashId: null,
@@ -252,6 +323,8 @@ export const useTodoStore = create<TodoState>((set, get) => ({
         ? { selectedId: primary, selectedIds: alive, ...(selectedGone ? { flashId: null } : {}) }
         : {}),
     });
+    // 完成 / 删除 / 撤销都会改变今日叶子数：让侧栏徽标跟上（防抖，失败静默）。
+    useOverviewStore.getState().scheduleTodayRefresh();
   },
 
   async toggle(id) {
@@ -296,11 +369,13 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     }
     set({
       viewMode: 'tree',
+      lastDocView: 'tree',
       selectedId: id,
       selectedIds: [id],
       flashId: id,
       revealTarget: { id, ts: Date.now() },
     });
+    persistViewState({ viewMode: 'tree', lastDocView: 'tree', previousViewMode: get().previousViewMode });
     if (flashTimer) clearTimeout(flashTimer);
     flashTimer = setTimeout(() => set({ flashId: null }), 2400);
   },
@@ -482,14 +557,17 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     if (get().currentDocId === id) return;
     try {
       await ipc.switchDocument(id);
+      // 从总览 / 回收站 / 设置回到文档层时，恢复上次用的渲染方式
+      const nextView = get().lastDocView;
       set({
         currentDocId: id,
         selectedId: null,
         selectedIds: [],
         flashId: null,
-        viewMode: 'tree',
+        viewMode: nextView,
         hideDone: readHideDone(id),
       });
+      persistViewState({ viewMode: nextView, lastDocView: nextView, previousViewMode: get().previousViewMode });
       await get().loadTree();
       await get().loadDocuments();
     } catch (e) {
@@ -691,13 +769,20 @@ export const useTodoStore = create<TodoState>((set, get) => ({
     });
   },
   setViewMode(m) {
-    const { viewMode } = get();
-    set({
+    const { viewMode, lastDocView, previousViewMode } = get();
+    // 文档层视图记住「上次用的渲染方式」，供全局层返回时恢复；
+    // 设置页记住是从哪来的，供「返回」回到原页面。
+    const next: ViewState = {
       viewMode: m,
-      // 记住进入设置页之前的视图，供设置页「返回」回到原页面
-      ...(m === 'settings' && viewMode !== 'settings' ? { previousViewMode: viewMode } : {}),
+      lastDocView: isDocViewMode(m) ? m : lastDocView,
+      previousViewMode: m === 'settings' && viewMode !== 'settings' ? viewMode : previousViewMode,
+    };
+    set({
+      ...next,
       ...(m !== 'tree' ? { searchOpen: false } : {}),
     });
+    // 落盘：下次启动直接回到这一页（G-19）。
+    persistViewState(next);
   },
   setTheme(t) {
     applyTheme(t);

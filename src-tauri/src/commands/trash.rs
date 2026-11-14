@@ -17,17 +17,30 @@ pub fn list_trash(state: State<'_, AppState>) -> AppResult<Vec<TrashItem>> {
 /// 恢复：文档文件 / 目录结构与文档一起回到侧边栏。
 #[tauri::command]
 pub fn restore_trash(state: State<'_, AppState>, id: String) -> AppResult<DocIndex> {
-    state.docs.restore(&id)
+    let idx = state.docs.restore(&id)?;
+    // 恢复后重新计入总览（docs/10 决策 3）：立即对账，不等 worker。
+    if let Err(err) = state.stats.sync_all() {
+        eprintln!("恢复文档后同步总览失败: {err}");
+    }
+    Ok(idx)
 }
 
 /// 彻底删除单条回收站条目（物理删除 db 文件）。
 #[tauri::command]
 pub fn purge_trash(state: State<'_, AppState>, id: String) -> AppResult<DocIndex> {
-    state.docs.purge(&id)
+    let idx = state.docs.purge(&id)?;
+    if let Err(err) = state.stats.sync_all() {
+        eprintln!("彻底删除后同步总览失败: {err}");
+    }
+    Ok(idx)
 }
 
 /// 清空回收站。
 #[tauri::command]
 pub fn empty_trash(state: State<'_, AppState>) -> AppResult<DocIndex> {
-    state.docs.empty_trash()
+    let idx = state.docs.empty_trash()?;
+    if let Err(err) = state.stats.sync_all() {
+        eprintln!("清空回收站后同步总览失败: {err}");
+    }
+    Ok(idx)
 }

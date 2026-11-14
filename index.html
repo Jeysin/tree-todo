@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tree Todo</title>
+    <script>
+      // 防闪屏：在样式生效前按上次选择恢复主题（key 与 src/stores/todoStore.ts 的 THEME_KEY 一致）。
+      // 没有这段，深色系统 + 浅色设置的用户每次启动会先黑一下再变白。
+      (function () {
+        try {
+          var t = localStorage.getItem('tree-todo.theme');
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.setAttribute('data-theme', t);
+          }
+        } catch (e) {
+          /* localStorage 不可用时保持跟随系统 */
+        }
+      })();
+    </script>
   </head>
 
   <body>
