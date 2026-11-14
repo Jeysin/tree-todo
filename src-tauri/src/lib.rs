@@ -29,19 +29,27 @@ const MENU_CHECK_UPDATE: &str = "check_update";
 
 /// 在系统菜单栏挂全局入口：File → 导出全部 / 导入；以及「检查更新…」
 /// （macOS 应用名菜单，Windows Help 菜单）。macOS 是屏幕顶部菜单栏，Windows / Linux 是窗口菜单。
-fn install_menu(app: &tauri::App) -> tauri::Result<()> {
-    let menu = Menu::default(app.handle())?;
+/// 语言由前端启动时同步过来（设置页切换语言后调用 `set_menu_language` 即时重建）。
+fn create_menu(app: &tauri::AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    let en = lang == "en";
+    let file_label = if en { "File" } else { "文件" };
+    let export_label = if en { "Export All…" } else { "导出全部…" };
+    let import_label = if en { "Import…" } else { "导入…" };
+    let help_label = if en { "Help" } else { "帮助" };
+    let check_update_label = if en { "Check for Updates…" } else { "检查更新…" };
+
+    let menu = Menu::default(app)?;
     let export = MenuItem::with_id(
         app,
         MENU_EXPORT_ALL,
-        "导出全部…",
+        export_label,
         true,
         Some("CmdOrCtrl+Shift+E"),
     )?;
     let import = MenuItem::with_id(
         app,
         MENU_IMPORT,
-        "导入…",
+        import_label,
         true,
         Some("CmdOrCtrl+Shift+I"),
     )?;
@@ -52,7 +60,7 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
     let mut existing = None;
     for item in menu.items()? {
         if let MenuItemKind::Submenu(sub) = item
-            && sub.text()? == "File"
+            && matches!(sub.text()?.as_str(), "File" | "文件")
         {
             existing = Some(sub);
             break;
@@ -61,7 +69,7 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
     match existing {
         Some(sub) => sub.insert_items(&items, 0)?,
         None => {
-            let sub = Submenu::with_items(app, "File", true, &items)?;
+            let sub = Submenu::with_items(app, file_label, true, &items)?;
             let index = if cfg!(target_os = "macos") { 1 } else { 0 };
             menu.insert(&sub, index)?;
         }
@@ -69,7 +77,8 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
     // 检查更新入口（docs/08 §5）：
     // - macOS：应用名菜单（第一项）里「关于」之后；
     // - Windows：原生菜单栏没有应用名菜单，放 Help 首项。
-    let check_update = MenuItem::with_id(app, MENU_CHECK_UPDATE, "检查更新…", true, None::<&str>)?;
+    let check_update =
+        MenuItem::with_id(app, MENU_CHECK_UPDATE, check_update_label, true, None::<&str>)?;
     // 用 cfg! 而不是 #[cfg]：让两个平台的分支都参与编译，交叉检查类型。
     if cfg!(target_os = "macos") {
         // 默认菜单的第一项就是应用名菜单（About / Services / Quit 所在）。
@@ -78,20 +87,36 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
         }
     } else {
         let help = menu.items()?.into_iter().find(|item| match item {
-            MenuItemKind::Submenu(sub) => matches!(sub.text().as_deref(), Ok("Help") | Ok("帮助")),
+            MenuItemKind::Submenu(sub) => {
+                matches!(sub.text().as_deref(), Ok("Help") | Ok("帮助"))
+            }
             _ => false,
         });
         match help {
             Some(MenuItemKind::Submenu(sub)) => sub.insert(&check_update, 0)?,
             _ => {
                 let items: [&dyn IsMenuItem<_>; 1] = [&check_update];
-                let sub = Submenu::with_items(app, "Help", true, &items)?;
+                let sub = Submenu::with_items(app, help_label, true, &items)?;
                 menu.append(&sub)?;
             }
         }
     }
+    Ok(menu)
+}
 
+fn install_menu(app: &tauri::App) -> tauri::Result<()> {
+    let menu = create_menu(app.handle(), "zh")?;
     app.set_menu(menu)?;
+    Ok(())
+}
+
+/// 前端启动 / 切换语言时同步原生菜单文案（重建整个菜单，事件监听不受影响）。
+#[tauri::command]
+fn set_menu_language(app: tauri::AppHandle, lang: String) -> Result<(), crate::error::AppError> {
+    let menu = create_menu(&app, &lang)
+        .map_err(|e| crate::error::AppError::Io(std::io::Error::other(e)))?;
+    app.set_menu(menu)
+        .map_err(|e| crate::error::AppError::Io(std::io::Error::other(e)))?;
     Ok(())
 }
 
@@ -165,7 +190,7 @@ pub fn run() {
             let db_path = docs.db_path(&current_id);
             let db = Db::open(&db_path)?;
             db::exec::reconcile(&db.conn)?;
-            let runtime = runtime::start(app.handle().clone(), data_dir)
+            let runtime = runtime::start(app.handle().clone(), data_dir, idx.mcp_enabled)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
 
             // 全局统计（docs/10）：派生数据，初始化失败不阻止应用启动，降级到内存库。
@@ -215,6 +240,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_menu_language,
             commands::get_tree,
             commands::create_node,
             commands::update_content,
@@ -267,6 +293,7 @@ pub fn run() {
             commands::open_path,
             commands::copy_text,
             commands::get_mcp_config,
+            commands::set_mcp_enabled,
             commands::reset_mcp_token,
             commands::get_overview,
             commands::get_overview_day,

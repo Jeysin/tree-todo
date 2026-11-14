@@ -8,6 +8,8 @@ import { TopBar } from './components/TopBar';
 import { NodeDetailPanel } from './components/NodeDetailPanel';
 import { RunDrawer } from './components/RunDrawer';
 import { UpdateDialog } from './components/UpdateDialog';
+import { useLang, useT } from './i18n';
+import { ipc } from './ipc';
 import { useOverviewStore } from './stores/overviewStore';
 import { initRunEvents, useRunStore } from './stores/runStore';
 import { useTodoStore } from './stores/todoStore';
@@ -20,6 +22,7 @@ import { TrashView } from './views/trash/TrashView';
 import { MindMapView } from './views/tree/MindMapView';
 
 function App() {
+  const t = useT();
   const viewMode = useTodoStore(s => s.viewMode);
   const loaded = useTodoStore(s => s.loaded);
   const loadTree = useTodoStore(s => s.loadTree);
@@ -38,6 +41,12 @@ function App() {
     void refreshClipboard();
     void useOverviewStore.getState().refreshToday();
   }, [loadDocuments, loadTree, loadTrash, refreshClipboard]);
+
+  // 语言（含系统时区推断出的默认值）同步到原生菜单；设置页切换后也会重建菜单。
+  const lang = useLang();
+  useEffect(() => {
+    void ipc.setMenuLanguage(lang).catch(() => {});
+  }, [lang]);
 
   // 侧栏「今日完成」徽标：启动对账可能稍晚完成，30s 轮询兜底；跨零点也会自动归零。
   useEffect(() => {
@@ -150,7 +159,7 @@ function App() {
         void st.copyNodes(ids);
       } else {
         if (!st.selectedId) {
-          st.showToast('请先选中要粘贴到的节点');
+          st.showToast(t('请先选中要粘贴到的节点'));
           return;
         }
         void st.pasteNodes(st.selectedId);
@@ -158,11 +167,11 @@ function App() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
+  }, [t]);
 
   if (!loaded) {
     return (
-      <div className="h-full flex items-center justify-center text-sm text-muted">加载中…</div>
+      <div className="h-full flex items-center justify-center text-sm text-muted">{t('加载中…')}</div>
     );
   }
 

@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 
 import { AppIcon } from './AppIcon';
+import { useT } from '../i18n';
 import { ipc } from '../ipc';
 import { compareDocSiblings as compareSiblings } from '../lib/docTree';
 import { useOverviewStore } from '../stores/overviewStore';
@@ -99,10 +100,11 @@ interface Editing {
   id: string;
 }
 
-const NEW_DOC_NAME = '未命名文档';
-const NEW_FOLDER_NAME = '未命名目录';
+const NEW_DOC_NAME_KEY = '未命名文档';
+const NEW_FOLDER_NAME_KEY = '未命名目录';
 
 export function Sidebar() {
+  const t = useT();
   const documents = useTodoStore(s => s.documents);
   const folders = useTodoStore(s => s.folders);
   const currentDocId = useTodoStore(s => s.currentDocId);
@@ -257,8 +259,8 @@ export function Sidebar() {
   const inDocLayer = isDocViewMode(viewMode);
   const addTargetId = selectedFolderId ?? currentDoc?.folderId ?? null;
   const addTargetName = addTargetId
-    ? (folders.find(f => f.id === addTargetId)?.name ?? '根目录')
-    : '根目录';
+    ? (folders.find(f => f.id === addTargetId)?.name ?? t('根目录'))
+    : t('根目录');
 
   // 选中的目录被删掉后清空选中，避免「+」指向不存在的目录。
   useEffect(() => {
@@ -420,7 +422,7 @@ export function Sidebar() {
   };
 
   const handleNewFolder = async (parentId: string | null) => {
-    const meta = await createFolder(NEW_FOLDER_NAME, parentId);
+    const meta = await createFolder(t(NEW_FOLDER_NAME_KEY), parentId);
     if (!meta) return;
     if (parentId) expandFolder(parentId);
     setSelectedFolderId(meta.id);
@@ -431,7 +433,7 @@ export function Sidebar() {
   const handleNewDocument = (folderId: string | null) => {
     // 在目录里新建时确保该目录展开，否则新文档看不见。
     if (folderId) expandFolder(folderId);
-    void createDocument(NEW_DOC_NAME, folderId).then(id => {
+    void createDocument(t(NEW_DOC_NAME_KEY), folderId).then(id => {
       if (!id) return;
       // 新文档会成为当前文档，目录落点让位给文档高亮。
       setSelectedFolderId(null);
@@ -460,25 +462,28 @@ export function Sidebar() {
     const stats = folderStats(id);
     const detail =
       stats.docs > 0
-        ? `整个目录（含 ${stats.docs} 个文档）会移入回收站，可随时整体恢复。`
-        : '目录为空，删除后可从回收站恢复。';
-    const ok = await confirm(`删除目录「${name}」？\n\n${detail}`, {
-      title: '删除目录',
+        ? t('整个目录（含 {n} 个文档）会移入回收站，可随时整体恢复。', { n: stats.docs })
+        : t('目录为空，删除后可从回收站恢复。');
+    const ok = await confirm(t('删除目录「{name}」？\n\n{detail}', { name, detail }), {
+      title: t('删除目录'),
       kind: 'warning',
-      okLabel: '移入回收站',
-      cancelLabel: '取消',
+      okLabel: t('移入回收站'),
+      cancelLabel: t('取消'),
     });
     if (!ok) return;
     void deleteFolder(id);
   };
 
   const handleDeleteDoc = async (id: string, name: string) => {
-    const ok = await confirm(`将文档「${name}」移入回收站？\n\n文档数据会保留，可从回收站恢复。`, {
-      title: '删除文档',
-      kind: 'warning',
-      okLabel: '移入回收站',
-      cancelLabel: '取消',
-    });
+    const ok = await confirm(
+      t('将文档「{name}」移入回收站？\n\n文档数据会保留，可从回收站恢复。', { name }),
+      {
+        title: t('删除文档'),
+        kind: 'warning',
+        okLabel: t('移入回收站'),
+        cancelLabel: t('取消'),
+      },
+    );
     if (!ok) return;
     void deleteDocument(id);
   };
@@ -757,7 +762,7 @@ export function Sidebar() {
             type="button"
             onClick={() => void checkUpdate({ manual: true })}
             disabled={updatePhase === 'checking'}
-            title={updatePhase === 'downloading' ? '查看更新进度' : '检查更新'}
+            title={updatePhase === 'downloading' ? t('查看更新进度') : t('检查更新')}
             className="inline-flex select-none items-center gap-1 text-[11px] tabular-nums text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:cursor-default disabled:opacity-50"
           >
             v{version}
@@ -773,7 +778,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => setViewMode('overview')}
-          title="总览：全部文档的完成记录 (Ctrl/⌘+4)"
+          title={t('总览：全部文档的完成记录 (Ctrl/⌘+4)')}
           aria-current={viewMode === 'overview' ? 'page' : undefined}
           className={[
             'group w-full flex items-center gap-2 h-7 px-2 rounded-md text-[13px] transition-colors select-none',
@@ -788,11 +793,11 @@ export function Sidebar() {
               viewMode === 'overview' ? 'text-accent' : 'text-muted',
             ].join(' ')}
           />
-          <span className="flex-1 text-left">总览</span>
+          <span className="flex-1 text-left">{t('总览')}</span>
           {todayDone > 0 && (
             <span
               className="min-w-5 h-4 px-1 rounded-full bg-accent/15 text-accent text-[10px] leading-4 text-center tabular-nums"
-              title={`今天完成 ${todayDone} 个叶子任务`}
+              title={t('今天完成 {n} 个叶子任务', { n: todayDone })}
             >
               +{todayDone}
             </span>
@@ -824,13 +829,13 @@ export function Sidebar() {
       >
         <div ref={addMenuRef} className="relative flex items-center justify-between px-2 pb-1.5">
           <span className="text-[11px] font-medium text-muted uppercase tracking-wider select-none">
-            文档
+            {t('文档')}
           </span>
           <button
             data-sidebar-action
             onClick={() => setAddMenu(v => !v)}
             className="w-5 h-5 rounded flex items-center justify-center text-muted hover:text-primary hover:bg-base transition-colors"
-            title="新建"
+            title={t('新建')}
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -840,7 +845,7 @@ export function Sidebar() {
               className="absolute right-0 top-6 z-50 w-44 rounded-lg border border-border bg-elevated shadow-xl py-1"
             >
               <div className="px-3 pt-1 pb-1.5 text-[11px] text-muted select-none truncate">
-                在「{addTargetName}」下新建
+                {t('在「{name}」下新建', { name: addTargetName })}
               </div>
               <button
                 onClick={() => {
@@ -850,7 +855,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <FileText className="w-3.5 h-3.5 text-muted" />
-                新建文档
+                {t('新建文档')}
               </button>
               <button
                 onClick={() => {
@@ -860,7 +865,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <FolderPlus className="w-3.5 h-3.5 text-muted" />
-                新建目录
+                {t('新建目录')}
               </button>
             </div>
           )}
@@ -914,7 +919,7 @@ export function Sidebar() {
                 isDragSource ? 'opacity-40' : '',
                 dropZone === 'into' ? 'bg-accent/15 text-primary ring-1 ring-accent/40' : '',
               ].join(' ')}
-              title={isFolder ? row.name : selected ? `${row.name}（双击重命名）` : row.name}
+              title={isFolder ? row.name : selected ? t('{name}（双击重命名）', { name: row.name }) : row.name}
             >
               {isFolder ? (
                 <>
@@ -925,7 +930,7 @@ export function Sidebar() {
                       toggleFolder(row.id);
                     }}
                     className="w-4 h-4 flex items-center justify-center rounded hover:bg-base shrink-0"
-                    title={open ? '折叠目录' : '展开目录'}
+                    title={open ? t('折叠目录') : t('展开目录')}
                   >
                     {open ? (
                       <ChevronDown className="w-3 h-3 text-muted/80" />
@@ -963,7 +968,7 @@ export function Sidebar() {
                 <input
                   autoFocus
                   value={draftName}
-                  placeholder={isFolder ? NEW_FOLDER_NAME : NEW_DOC_NAME}
+                  placeholder={isFolder ? t('未命名目录') : t('未命名文档')}
                   onChange={e => setDraftName(e.target.value)}
                   onFocus={e => e.currentTarget.select()}
                   onBlur={() => {
@@ -995,7 +1000,7 @@ export function Sidebar() {
                     void handleDeleteDoc(row.id, row.name);
                   }}
                   className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded flex items-center justify-center text-muted hover:text-red-500 transition-all"
-                  title="删除文档"
+                  title={t('删除文档')}
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -1011,7 +1016,7 @@ export function Sidebar() {
           );
         })}
         {dropTarget?.kind === 'root' && (
-          <div className="mx-2 mt-1 h-0.5 rounded-full bg-accent" title="移到根目录末尾" />
+          <div className="mx-2 mt-1 h-0.5 rounded-full bg-accent" title={t('移到根目录末尾')} />
         )}
       </div>
 
@@ -1022,8 +1027,8 @@ export function Sidebar() {
             'relative w-7 h-7 rounded-md flex items-center justify-center transition-colors',
             viewMode === 'trash' ? 'bg-accent/12 text-accent' : 'text-muted hover:bg-base hover:text-primary',
           ].join(' ')}
-          title="回收站"
-          aria-label="回收站"
+          title={t('回收站')}
+          aria-label={t('回收站')}
         >
           <Trash2 className="w-4 h-4" />
           {trash.length > 0 && (
@@ -1038,8 +1043,8 @@ export function Sidebar() {
             'w-7 h-7 rounded-md flex items-center justify-center transition-colors',
             viewMode === 'settings' ? 'bg-accent/12 text-accent' : 'text-muted hover:bg-base hover:text-primary',
           ].join(' ')}
-          title="设置（Ctrl+,）"
-          aria-label="设置"
+          title={t('设置（Ctrl+,）')}
+          aria-label={t('设置')}
         >
           <Settings className="w-4 h-4" />
         </button>
@@ -1051,7 +1056,7 @@ export function Sidebar() {
         onPointerMove={onResizeMove}
         onPointerUp={onResizeUp}
         className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-accent/40 active:bg-accent/60 transition-colors"
-        title="拖拽调整侧边栏宽度"
+        title={t('拖拽调整侧边栏宽度')}
       />
 
       {/* 拖拽时跟随光标的标签（纯装饰，不参与命中测试） */}
@@ -1078,7 +1083,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <FileText className="w-3.5 h-3.5 text-muted" />
-                新建文档
+                {t('新建文档')}
               </button>
               <button
                 onClick={() => {
@@ -1088,7 +1093,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <FolderPlus className="w-3.5 h-3.5 text-muted" />
-                新建目录
+                {t('新建目录')}
               </button>
             </>
           ) : menu.kind === 'folder' ? (
@@ -1102,7 +1107,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <FileText className="w-3.5 h-3.5 text-muted" />
-                新建文档
+                {t('新建文档')}
               </button>
               <button
                 onClick={() => {
@@ -1113,7 +1118,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <FolderPlus className="w-3.5 h-3.5 text-muted" />
-                新建子目录
+                {t('新建子目录')}
               </button>
               <div className="my-1 border-t border-border" />
               <button
@@ -1125,7 +1130,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <Download className="w-3.5 h-3.5 text-muted" />
-                导出
+                {t('导出')}
               </button>
               <button
                 onClick={() => {
@@ -1136,7 +1141,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <Upload className="w-3.5 h-3.5 text-muted" />
-                导入到此目录…
+                {t('导入到此目录…')}
               </button>
               <div
                 className="relative"
@@ -1145,14 +1150,14 @@ export function Sidebar() {
               >
                 <button onClick={() => setMoveOpen(v => !v)} className={menuItemClass}>
                   <FolderInput className="w-3.5 h-3.5 text-muted" />
-                  移动到…
+                  {t('移动到…')}
                   <ChevronRight className="w-3 h-3 ml-auto text-muted" />
                 </button>
                 {moveOpen && (
                   <div className="absolute left-full top-0 ml-1 w-52 max-h-64 overflow-y-auto rounded-lg border border-border bg-elevated shadow-xl py-1">
                     <button onClick={() => doMove(null)} className={menuItemClass}>
                       <Folder className="w-3.5 h-3.5 text-muted" />
-                      根目录
+                      {t('根目录')}
                     </button>
                     {moveTargets.map(f => (
                       <button
@@ -1166,7 +1171,7 @@ export function Sidebar() {
                       </button>
                     ))}
                     {moveTargets.length === 0 && (
-                      <div className="px-3 py-2 text-[12px] text-muted">没有可选目录</div>
+                      <div className="px-3 py-2 text-[12px] text-muted">{t('没有可选目录')}</div>
                     )}
                   </div>
                 )}
@@ -1181,7 +1186,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <Pencil className="w-3.5 h-3.5 text-muted" />
-                重命名
+                {t('重命名')}
               </button>
               <button
                 onClick={() => {
@@ -1192,7 +1197,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <Trash2 className="w-3.5 h-3.5 text-muted" />
-                删除目录
+                {t('删除目录')}
               </button>
             </>
           ) : (
@@ -1206,7 +1211,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <Download className="w-3.5 h-3.5 text-muted" />
-                导出
+                {t('导出')}
               </button>
               <div
                 className="relative"
@@ -1215,14 +1220,14 @@ export function Sidebar() {
               >
                 <button onClick={() => setMoveOpen(v => !v)} className={menuItemClass}>
                   <FolderInput className="w-3.5 h-3.5 text-muted" />
-                  移动到…
+                  {t('移动到…')}
                   <ChevronRight className="w-3 h-3 ml-auto text-muted" />
                 </button>
                 {moveOpen && (
                   <div className="absolute left-full top-0 ml-1 w-52 max-h-64 overflow-y-auto rounded-lg border border-border bg-elevated shadow-xl py-1">
                     <button onClick={() => doMove(null)} className={menuItemClass}>
                       <Folder className="w-3.5 h-3.5 text-muted" />
-                      根目录
+                      {t('根目录')}
                     </button>
                     {moveTargets.map(f => (
                       <button
@@ -1236,7 +1241,7 @@ export function Sidebar() {
                       </button>
                     ))}
                     {moveTargets.length === 0 && (
-                      <div className="px-3 py-2 text-[12px] text-muted">没有可选目录</div>
+                      <div className="px-3 py-2 text-[12px] text-muted">{t('没有可选目录')}</div>
                     )}
                   </div>
                 )}
@@ -1251,7 +1256,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <Pencil className="w-3.5 h-3.5 text-muted" />
-                重命名
+                {t('重命名')}
               </button>
               <button
                 onClick={() => {
@@ -1262,7 +1267,7 @@ export function Sidebar() {
                 className={menuItemClass}
               >
                 <Trash2 className="w-3.5 h-3.5 text-muted" />
-                删除文档
+                {t('删除文档')}
               </button>
             </>
           )}

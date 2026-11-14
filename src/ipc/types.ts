@@ -91,7 +91,10 @@ export interface CopyResult {
 
 /** MCP 服务配置（设置页展示与一键复制，docs/06 v2 §4.4）。 */
 export interface McpConfig {
+  /** 用户设置里的开关（持久化，默认开启）。 */
   enabled: boolean;
+  /** 本次运行中服务是否真正监听成功（关闭或端口全被占用时为 false）。 */
+  running: boolean;
   port: number | null;
   url: string | null;
   token: string;

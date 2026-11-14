@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import { ArrowRight, Loader2, X } from 'lucide-react';
 
+import { useT } from '../i18n';
 import { useRunStore } from '../stores/runStore';
 import { IS_DOWNLOAD_ONLY, IS_MACOS, useUpdateStore } from '../stores/updateStore';
 
@@ -40,6 +41,7 @@ function ReleaseNotes({ notes }: { notes: string }) {
 }
 
 export function UpdateDialog() {
+  const t = useT();
   const open = useUpdateStore(s => s.dialogOpen);
   const phase = useUpdateStore(s => s.phase);
   const info = useUpdateStore(s => s.info);
@@ -70,16 +72,16 @@ export function UpdateDialog() {
 
   const primaryLabel =
     phase === 'checking'
-      ? '检查中…'
+      ? t('检查中…')
       : phase === 'downloading'
-        ? '下载中…'
+        ? t('下载中…')
         : phase === 'installing'
-          ? '安装中…'
+          ? t('安装中…')
           : phase === 'error'
-            ? '重试'
+            ? t('重试')
             : IS_DOWNLOAD_ONLY
-              ? '前往下载'
-              : '立即更新';
+              ? t('前往下载')
+              : t('立即更新');
 
   return (
     <div
@@ -96,13 +98,13 @@ export function UpdateDialog() {
       >
         <header className="flex h-11 items-center justify-between border-b border-border px-4">
           <h2 id="update-dialog-title" className="text-[13px] font-medium text-primary">
-            发现新版本
+            {t('发现新版本')}
           </h2>
           <button
             onClick={closeDialog}
             disabled={phase === 'installing'}
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-base hover:text-primary disabled:opacity-40"
-            title="关闭"
+            title={t('关闭')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -118,18 +120,22 @@ export function UpdateDialog() {
             )}
           </div>
 
-          <ReleaseNotes notes={info.notes || '本次更新暂无说明。'} />
+          <ReleaseNotes notes={info.notes || t('本次更新暂无说明。')} />
 
           {IS_DOWNLOAD_ONLY ? (
             <p className="text-[11px] leading-4 text-muted/80">
               {IS_MACOS
-                ? 'macOS 版暂不支持应用内安装，将打开 GitHub Releases 下载页；Windows 版可直接下载安装。'
-                : 'Linux 版暂不支持应用内安装，将打开 GitHub Releases 下载页；请按发行版下载 .deb / .rpm 或 AppImage 手动安装。'}
+                ? t(
+                    'macOS 版暂不支持应用内安装，将打开 GitHub Releases 下载页；Windows 版可直接下载安装。',
+                  )
+                : t(
+                    'Linux 版暂不支持应用内安装，将打开 GitHub Releases 下载页；请按发行版下载 .deb / .rpm 或 AppImage 手动安装。',
+                  )}
             </p>
           ) : (
             runningCount > 0 && (
               <p className="rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1.5 text-[11px] leading-4 text-warning">
-                有 {runningCount} 个任务正在执行，更新会重启应用；执行记录会保留。
+                {t('有 {n} 个任务正在执行，更新会重启应用；执行记录会保留。', { n: runningCount })}
               </p>
             )
           )}
@@ -146,15 +152,18 @@ export function UpdateDialog() {
                 {phase === 'installing' ? (
                   <>
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    正在安装，应用即将重启…
+                    {t('正在安装，应用即将重启…')}
                   </>
                 ) : percent != null ? (
                   <span>
-                    正在下载 {percent}% · {formatSize(progress.downloaded)} /{' '}
-                    {formatSize(progress.total ?? progress.downloaded)}
+                    {t('正在下载 {percent}% · {a} / {b}', {
+                      percent,
+                      a: formatSize(progress.downloaded),
+                      b: formatSize(progress.total ?? progress.downloaded),
+                    })}
                   </span>
                 ) : (
-                  <span>正在下载 · {formatSize(progress.downloaded)}</span>
+                  <span>{t('正在下载 · {size}', { size: formatSize(progress.downloaded) })}</span>
                 )}
               </div>
             </div>
@@ -169,7 +178,7 @@ export function UpdateDialog() {
             disabled={phase === 'installing'}
             className="h-8 rounded-lg border border-border px-3 text-[13px] text-muted transition-colors hover:bg-base hover:text-primary disabled:opacity-40"
           >
-            稍后
+            {t('稍后')}
           </button>
           <button
             autoFocus

@@ -6,8 +6,9 @@
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 
+import { localizedError, t } from '../i18n';
 import { ipc } from '../ipc';
-import type { AppError, RunView } from '../ipc/types';
+import type { RunView } from '../ipc/types';
 import { useTodoStore } from './todoStore';
 
 interface RunState {
@@ -30,8 +31,7 @@ interface RunState {
 }
 
 function errMsg(e: unknown, fallback: string): string {
-  const ae = e as Partial<AppError> | undefined;
-  return ae?.message || fallback;
+  return localizedError(e, fallback);
 }
 
 let listening = false;
@@ -68,16 +68,16 @@ export const useRunStore = create<RunState>((set, get) => ({
         await navigator.clipboard.writeText(result.prompt);
       }
       const lines = result.prompt.split('\n').length;
-      const label = variant === 'receipt' ? '带回执' : '纯文本';
-      const suffix = result.reused ? ' · 复用上一轮' : '';
-      const scope = result.taskCount > 1 ? ` · ${result.taskCount} 个任务` : '';
-      st.showToast(`Prompt 已复制（${label}）${scope} · ${lines} 行${suffix}`);
+      const label = variant === 'receipt' ? t('带回执') : t('纯文本');
+      const suffix = result.reused ? ` · ${t('复用上一轮')}` : '';
+      const scope = result.taskCount > 1 ? ` · ${t('{n} 个任务', { n: result.taskCount })}` : '';
+      st.showToast(t('Prompt 已复制（{label}）{scope} · {lines} 行{suffix}', { label, scope, lines, suffix }));
       if (variant === 'receipt') {
         await get().loadRuns();
       }
       return true;
     } catch (e) {
-      st.showToast(errMsg(e, '复制失败'));
+      st.showToast(errMsg(e, t('复制失败')));
       return false;
     }
   },
@@ -87,9 +87,9 @@ export const useRunStore = create<RunState>((set, get) => ({
       await ipc.closeRun(runId);
       await useTodoStore.getState().loadTree();
       await get().loadRuns();
-      useTodoStore.getState().showToast('已标记结束');
+      useTodoStore.getState().showToast(t('已标记结束'));
     } catch (e) {
-      useTodoStore.getState().showToast(errMsg(e, '操作失败'));
+      useTodoStore.getState().showToast(errMsg(e, t('操作失败')));
     }
   },
 
@@ -99,9 +99,9 @@ export const useRunStore = create<RunState>((set, get) => ({
       useTodoStore.getState().applyAffected(af);
       await useTodoStore.getState().loadTree();
       await get().loadRuns();
-      useTodoStore.getState().showToast('已验收，任务已勾选');
+      useTodoStore.getState().showToast(t('已验收，任务已勾选'));
     } catch (e) {
-      useTodoStore.getState().showToast(errMsg(e, '验收失败'));
+      useTodoStore.getState().showToast(errMsg(e, t('验收失败')));
     }
   },
 
@@ -110,9 +110,9 @@ export const useRunStore = create<RunState>((set, get) => ({
       await ipc.rejectRun(runId, nodeIds, feedback);
       await useTodoStore.getState().loadTree();
       await get().loadRuns();
-      useTodoStore.getState().showToast('已驳回，反馈已写回备注');
+      useTodoStore.getState().showToast(t('已驳回，反馈已写回备注'));
     } catch (e) {
-      useTodoStore.getState().showToast(errMsg(e, '驳回失败'));
+      useTodoStore.getState().showToast(errMsg(e, t('驳回失败')));
     }
   },
 
@@ -122,7 +122,7 @@ export const useRunStore = create<RunState>((set, get) => ({
       useTodoStore.getState().applyAffected(af);
       await useTodoStore.getState().loadTree();
     } catch (e) {
-      useTodoStore.getState().showToast(errMsg(e, '验收失败'));
+      useTodoStore.getState().showToast(errMsg(e, t('验收失败')));
     }
   },
 
@@ -131,7 +131,7 @@ export const useRunStore = create<RunState>((set, get) => ({
       const af = await ipc.dismissNode(nodeId);
       useTodoStore.getState().applyAffected(af);
     } catch (e) {
-      useTodoStore.getState().showToast(errMsg(e, '操作失败'));
+      useTodoStore.getState().showToast(errMsg(e, t('操作失败')));
     }
   },
 }));

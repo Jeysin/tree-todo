@@ -240,6 +240,7 @@ impl DocStore {
             trash_folders: Vec::new(),
             trash_retention_days: 30,
             prompt_constraints: crate::agents::DEFAULT_PROMPT_CONSTRAINTS.to_string(),
+            mcp_enabled: true,
         };
         self.save_index(&idx)?;
         Ok(idx)
@@ -643,6 +644,18 @@ impl DocStore {
         Ok(idx.prompt_constraints.clone())
     }
 
+    /// MCP 服务开关（默认开启；旧索引缺失该字段时按开启处理）。
+    pub fn mcp_enabled(&self) -> AppResult<bool> {
+        Ok(self.load_index()?.mcp_enabled)
+    }
+
+    pub fn set_mcp_enabled(&self, enabled: bool) -> AppResult<bool> {
+        let mut idx = self.load_index()?;
+        idx.mcp_enabled = enabled;
+        self.save_index(&idx)?;
+        Ok(enabled)
+    }
+
     /// 清理回收站里删除时间超过 `retention_days` 天的内容，返回清理条数。
     /// 时间戳解析失败的条目不清理（宁可保留也不误删）。
     pub fn purge_expired_trash(&self, retention_days: u32) -> AppResult<usize> {
@@ -895,6 +908,7 @@ mod tests {
             trash_folders: Vec::new(),
             trash_retention_days: 30,
             prompt_constraints: crate::agents::DEFAULT_PROMPT_CONSTRAINTS.to_string(),
+            mcp_enabled: true,
         };
         migrate_index(&mut idx);
         assert_eq!(idx.schema_version, INDEX_SCHEMA_VERSION);

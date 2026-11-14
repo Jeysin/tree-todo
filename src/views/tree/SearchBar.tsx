@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 
 import { breadcrumb, useTodoStore } from '../../stores/todoStore';
+import { useT } from '../../i18n';
 
 interface SearchBarProps {
   open: boolean;
@@ -10,6 +11,7 @@ interface SearchBarProps {
 }
 
 export function SearchBar({ open, onClose }: SearchBarProps) {
+  const t = useT();
   const nodes = useTodoStore(s => s.nodes);
   const revealNode = useTodoStore(s => s.revealNode);
   const [query, setQuery] = useState('');
@@ -53,7 +55,7 @@ export function SearchBar({ open, onClose }: SearchBarProps) {
           <input
             ref={inputRef}
             value={query}
-            placeholder="搜索节点内容或备注…"
+            placeholder={t('搜索节点内容或备注…')}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => {
               e.stopPropagation();
@@ -73,7 +75,7 @@ export function SearchBar({ open, onClose }: SearchBarProps) {
             }}
             className="flex-1 bg-transparent outline-none text-sm text-primary placeholder:text-muted/60"
           />
-          <button onClick={onClose} className="text-muted hover:text-primary transition-colors" title="关闭 (Esc)">
+          <button onClick={onClose} className="text-muted hover:text-primary transition-colors" title={t('关闭 (Esc)')}>
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -81,7 +83,7 @@ export function SearchBar({ open, onClose }: SearchBarProps) {
         {query.trim() !== '' && (
           <div className="max-h-72 overflow-y-auto py-1">
             {results.length === 0 ? (
-              <p className="px-3 py-4 text-sm text-muted/70 text-center">没有匹配的节点</p>
+              <p className="px-3 py-4 text-sm text-muted/70 text-center">{t('没有匹配的节点')}</p>
             ) : (
               results.map((r, i) => (
                 <button
@@ -94,9 +96,9 @@ export function SearchBar({ open, onClose }: SearchBarProps) {
                   ].join(' ')}
                 >
                   <span className="text-sm text-primary truncate">
-                    {r.node.content || '未命名'}
+                    {r.node.content || t('未命名')}
                     {r.node.status === 'done' && (
-                      <span className="ml-2 text-xs text-success">已完成</span>
+                      <span className="ml-2 text-xs text-success">{t('已完成')}</span>
                     )}
                   </span>
                   {r.path.length > 0 && (

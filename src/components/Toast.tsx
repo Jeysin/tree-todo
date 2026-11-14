@@ -2,9 +2,11 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
+import { useT } from '../i18n';
 import { useTodoStore } from '../stores/todoStore';
 
 export function ToastContainer() {
+  const t = useT();
   const toast = useTodoStore(s => s.toast);
   const clearToast = useTodoStore(s => s.clearToast);
   const undo = useTodoStore(s => s.undo);
@@ -27,13 +29,13 @@ export function ToastContainer() {
           }}
           className="text-accent font-medium hover:underline"
         >
-          撤销
+          {t('撤销')}
         </button>
       )}
       <button
         onClick={clearToast}
         className="text-muted hover:text-primary transition-colors"
-        title="关闭"
+        title={t('关闭')}
       >
         <X className="w-3.5 h-3.5" />
       </button>

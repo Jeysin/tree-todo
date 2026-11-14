@@ -7,6 +7,8 @@
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
 
+import { t } from '../i18n';
+
 /** 弹窗展示所需的更新信息（已从插件对象上摘下来，避免 UI 持有原生资源）。 */
 export interface UpdateInfo {
   /** 最新版本 */
@@ -61,7 +63,7 @@ export const updaterIpc = {
   /** 下载并安装已检查到的版本。 */
   async install(onProgress: (p: DownloadProgress) => void): Promise<void> {
     const update = pending;
-    if (!update) throw new Error('没有待安装的更新，请重新检查');
+    if (!update) throw new Error(t('没有待安装的更新，请重新检查'));
 
     let downloaded = 0;
     let total: number | null = null;

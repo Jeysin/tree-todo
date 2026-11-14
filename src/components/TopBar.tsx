@@ -12,48 +12,53 @@ import {
 } from 'lucide-react';
 
 import { DOC_VIEWS, useTodoStore } from '../stores/todoStore';
+import { useT } from '../i18n';
 import { useRunStore } from '../stores/runStore';
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** 常用快捷键（docs/04 §5）。macOS 用 ⌘ / ⇧ 展示。 */
-const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string }[] }[] = [
-  {
-    title: '新建与编辑',
-    items: [
-      { keys: ['N'], label: '在根任务下新建' },
-      { keys: ['Tab'], label: '新建子任务' },
-      { keys: ['Enter'], label: '新建同级任务' },
-      { keys: ['F2'], label: '编辑节点' },
-      { keys: ['Esc'], label: '取消编辑 / 关闭搜索' },
-    ],
-  },
-  {
-    title: '状态',
-    items: [
-      { keys: ['S'], label: '完成 / 取消完成' },
-      { keys: ['Delete'], label: '删除节点' },
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', 'Z'], label: '撤销' },
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', '⇧', 'Z'], label: '重做' },
-    ],
-  },
-  {
-    title: '视图',
-    items: [
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', '1'], label: '树形视图' },
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', '2'], label: '平铺视图' },
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', '3'], label: '统计视图' },
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', '4'], label: '总览' },
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', 'F'], label: '搜索' },
-      { keys: ['⇧', '1'], label: '适应视图' },
-      { keys: ['Space', '拖拽'], label: '平移画布' },
-      { keys: [IS_MAC ? '⌘' : 'Ctrl', '.'], label: '折叠 / 展开' },
-    ],
-  },
-];
+function shortcutGroups(t: (zh: string) => string) {
+  return [
+    {
+      title: t('新建与编辑'),
+      items: [
+        { keys: ['N'], label: t('在根任务下新建') },
+        { keys: ['Tab'], label: t('新建子任务') },
+        { keys: ['Enter'], label: t('新建同级任务') },
+        { keys: ['F2'], label: t('编辑节点') },
+        { keys: ['Esc'], label: t('取消编辑 / 关闭搜索') },
+      ],
+    },
+    {
+      title: t('状态'),
+      items: [
+        { keys: ['S'], label: t('完成 / 取消完成') },
+        { keys: ['Delete'], label: t('删除节点') },
+        { keys: [IS_MAC ? '⌘' : 'Ctrl', 'Z'], label: t('撤销') },
+        { keys: [IS_MAC ? '⌘' : 'Ctrl', '⇧', 'Z'], label: t('重做') },
+      ],
+    },
+    {
+      title: t('视图'),
+      items: [
+        { keys: [IS_MAC ? '⌘' : 'Ctrl', '1'], label: t('树形视图') },
+        { keys: [IS_MAC ? '⌘' : 'Ctrl', '2'], label: t('平铺视图') },
+        { keys: [IS_MAC ? '⌘' : 'Ctrl', '3'], label: t('统计视图') },
+        { keys: [IS_MAC ? '⌘' : 'Ctrl', '4'], label: t('总览') },
+        { keys: [IS_MAC ? '⌘' : 'Ctrl', 'F'], label: t('搜索') },
+        { keys: ['⇧', '1'], label: t('适应视图') },
+        { keys: ['Space', t('拖拽')], label: t('平移画布') },
+        { keys: [IS_MAC ? '⌘' : 'Ctrl', '.'], label: t('折叠 / 展开') },
+      ],
+    },
+  ];
+}
 
 /** 顶栏（docs/04 §2）：视图切换 + 文件菜单 + 更多菜单 + 快捷键教程。 */
 export function TopBar() {
+  const t = useT();
+  const SHORTCUT_GROUPS = shortcutGroups(t);
   const viewMode = useTodoStore(s => s.viewMode);
   const setViewMode = useTodoStore(s => s.setViewMode);
   const documents = useTodoStore(s => s.documents);
@@ -103,7 +108,13 @@ export function TopBar() {
   const currentDoc = documents.find(d => d.id === currentDocId) ?? null;
   const isDocView = (DOC_VIEWS as readonly string[]).includes(viewMode);
   const globalTitle =
-    viewMode === 'overview' ? '总览' : viewMode === 'trash' ? '回收站' : viewMode === 'settings' ? '设置' : '';
+    viewMode === 'overview'
+      ? t('总览')
+      : viewMode === 'trash'
+        ? t('回收站')
+        : viewMode === 'settings'
+          ? t('设置')
+          : '';
 
   const tab = (active: boolean) =>
     [
@@ -132,14 +143,14 @@ export function TopBar() {
             </div>
           )}
           <nav className="flex items-center gap-0.5 p-0.5 rounded-lg bg-base border border-border">
-            <button className={tab(viewMode === 'tree')} onClick={() => setViewMode('tree')} title="树形视图 (Ctrl+1)">
-              树形
+            <button className={tab(viewMode === 'tree')} onClick={() => setViewMode('tree')} title={t('树形视图 (Ctrl+1)')}>
+              {t('树形')}
             </button>
-            <button className={tab(viewMode === 'flat')} onClick={() => setViewMode('flat')} title="平铺视图 (Ctrl+2)">
-              平铺
+            <button className={tab(viewMode === 'flat')} onClick={() => setViewMode('flat')} title={t('平铺视图 (Ctrl+2)')}>
+              {t('平铺')}
             </button>
-            <button className={tab(viewMode === 'stats')} onClick={() => setViewMode('stats')} title="统计视图 (Ctrl+3)">
-              统计
+            <button className={tab(viewMode === 'stats')} onClick={() => setViewMode('stats')} title={t('统计视图 (Ctrl+3)')}>
+              {t('统计')}
             </button>
           </nav>
         </>
@@ -153,7 +164,11 @@ export function TopBar() {
       {(runningCount > 0 || awaitingCount > 0) && (
         <button
           onClick={() => useRunStore.getState().openRun(latestRunId)}
-          title={awaitingCount > 0 ? `${awaitingCount} 个任务待验收` : `${runningCount} 个任务执行中`}
+          title={
+            awaitingCount > 0
+              ? t('{n} 个任务待验收', { n: awaitingCount })
+              : t('{n} 个任务执行中', { n: runningCount })
+          }
           className="h-7 px-2.5 rounded-md border border-border text-xs text-muted hover:text-primary hover:bg-base inline-flex items-center gap-1.5"
         >
           {runningCount > 0 && (
@@ -165,7 +180,7 @@ export function TopBar() {
           {awaitingCount > 0 && (
             <span className="inline-flex items-center gap-1 text-warning">
               <span className="w-1.5 h-1.5 rounded-full bg-warning" />
-              待验收 {awaitingCount}
+              {t('待验收 {n}', { n: awaitingCount })}
             </span>
           )}
         </button>
@@ -173,19 +188,19 @@ export function TopBar() {
 
       {viewMode === 'tree' && (
         <>
-          <button className={iconBtn} onClick={() => setSearchOpen(true)} title="搜索 (Ctrl+F)">
+          <button className={iconBtn} onClick={() => setSearchOpen(true)} title={t('搜索 (Ctrl+F)')}>
             <Search className="w-4 h-4" />
           </button>
-          <button className={iconBtn} onClick={() => void collapseAll(true)} title="折叠全部">
+          <button className={iconBtn} onClick={() => void collapseAll(true)} title={t('折叠全部')}>
             <ChevronsDownUp className="w-4 h-4" />
           </button>
-          <button className={iconBtn} onClick={() => void collapseAll(false)} title="展开全部">
+          <button className={iconBtn} onClick={() => void collapseAll(false)} title={t('展开全部')}>
             <ChevronsUpDown className="w-4 h-4" />
           </button>
           <button
             onClick={() => setHideDone(!hideDone)}
             aria-pressed={hideDone}
-            title="隐藏已完成节点"
+            title={t('隐藏已完成节点')}
             className={[
               'w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
               hideDone
@@ -203,7 +218,7 @@ export function TopBar() {
         <button
           className={iconBtn}
           onClick={() => setMoreOpen(v => !v)}
-          title="更多"
+          title={t('更多')}
         >
           <MoreHorizontal className="w-4 h-4" />
         </button>
@@ -218,7 +233,7 @@ export function TopBar() {
               className={menuItem + ' disabled:opacity-40'}
             >
               <Download className="w-3.5 h-3.5 text-muted" />
-              导出
+              {t('导出')}
             </button>
           </div>
         )}
@@ -231,11 +246,11 @@ export function TopBar() {
           onFocus={openHelp}
           onBlur={scheduleCloseHelp}
           className="flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-border text-[13px] text-muted hover:text-primary hover:bg-base transition-colors"
-          title="常用快捷键"
-          aria-label="常用快捷键"
+          title={t('常用快捷键')}
+          aria-label={t('常用快捷键')}
         >
           <Keyboard className="w-4 h-4" />
-          快捷键
+          {t('快捷键')}
         </button>
       )}
 
@@ -246,7 +261,7 @@ export function TopBar() {
           className="absolute right-4 top-[52px] z-40 w-[272px] max-h-[calc(100vh-72px)] overflow-y-auto rounded-xl border border-border/70 bg-elevated/85 backdrop-blur-xl shadow-2xl p-3"
         >
           <div className="px-1 pb-1 text-[11px] font-medium text-muted uppercase tracking-wider select-none">
-            常用快捷键
+            {t('常用快捷键')}
           </div>
           {SHORTCUT_GROUPS.map(group => (
             <section key={group.title} className="pt-2">

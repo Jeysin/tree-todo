@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ClipboardCheck, Loader2, Square, X, XCircle } from 'lucide-react';
 
+import { locale, useT } from '../i18n';
 import { ipc } from '../ipc';
 import { formatDuration, liveDuration } from '../lib/exec';
 import { useRunStore } from '../stores/runStore';
 import { breadcrumb, useTodoStore } from '../stores/todoStore';
 
-const STATE_TEXT: Record<string, string> = {
+/** 状态文案由渲染时的 t() 提供（语言切换后同步更新）。 */
+const STATE_KEYS: Record<string, string> = {
   queued: '排队中（旧数据）',
   running: '执行中',
   awaiting_review: '待验收',
@@ -14,6 +16,7 @@ const STATE_TEXT: Record<string, string> = {
 };
 
 export function NodeDetailPanel() {
+  const t = useT();
   const nodeId = useRunStore(s => s.detailNodeId);
   const close = useRunStore(s => s.openDetail);
   const accept = useRunStore(s => s.accept);
@@ -60,7 +63,7 @@ export function NodeDetailPanel() {
         .updateNote(draft.id, draft.note)
         .then(af => useTodoStore.getState().applyAffected(af))
         .catch(e =>
-          useTodoStore.getState().showToast((e as { message?: string })?.message ?? '保存失败'),
+          useTodoStore.getState().showToast((e as { message?: string })?.message ?? t('保存失败')),
         );
     };
   }, [nodeId]);
@@ -84,15 +87,17 @@ export function NodeDetailPanel() {
   // note 防抖自动保存
   useEffect(() => {
     if (!node || note === node.note) return;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       void ipc
         .updateNote(node.id, note)
         .then(af => {
           useTodoStore.getState().applyAffected(af);
         })
-        .catch(e => useTodoStore.getState().showToast((e as { message?: string })?.message ?? '保存失败'));
+        .catch(e =>
+          useTodoStore.getState().showToast((e as { message?: string })?.message ?? t('保存失败')),
+        );
     }, 600);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [note, node]);
 
   if (!node) return null;
@@ -103,13 +108,13 @@ export function NodeDetailPanel() {
     <aside className="absolute right-0 top-0 bottom-0 w-[380px] z-30 border-l border-border bg-surface shadow-2xl flex flex-col">
       <header className="flex items-start gap-2 px-4 py-3 border-b border-border shrink-0">
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-primary break-words">{node.content || '未命名'}</div>
+          <div className="text-sm font-medium text-primary break-words">{node.content || t('未命名')}</div>
           {path.length > 0 && <div className="text-[11px] text-muted truncate mt-0.5">{path.join(' / ')}</div>}
         </div>
         <button
           onClick={() => close(null)}
           className="w-7 h-7 rounded flex items-center justify-center text-muted hover:bg-base"
-          title="关闭（Esc）"
+          title={t('关闭（Esc）')}
         >
           <X className="w-4 h-4" />
         </button>
@@ -117,10 +122,10 @@ export function NodeDetailPanel() {
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <section className="px-4 py-3 border-b border-border">
-          <div className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2">执行</div>
+          <div className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2">{t('执行')}</div>
           {!exec ? (
             <div className="text-xs text-muted/80 leading-5">
-              未执行。右键「复制 Prompt（带回执）」粘贴给你的 AI Agent，Agent 开始执行后这里会亮起。
+              {t('未执行。右键「复制 Prompt（带回执）」粘贴给你的 AI Agent，Agent 开始执行后这里会亮起。')}
             </div>
           ) : (
             <div className="space-y-2">
@@ -137,9 +142,11 @@ export function NodeDetailPanel() {
                           : 'bg-muted',
                   ].join(' ')}
                 />
-                <span className="text-sm text-primary">{STATE_TEXT[exec.state] ?? exec.state}</span>
+                <span className="text-sm text-primary">
+                  {STATE_KEYS[exec.state] ? t(STATE_KEYS[exec.state]) : exec.state}
+                </span>
                 {exec.needsConfirmation && (
-                  <span className="text-[11px] text-warning">· 未收到回执</span>
+                  <span className="text-[11px] text-warning">{t('· 未收到回执')}</span>
                 )}
                 <span className="ml-auto text-xs text-muted tabular-nums">{formatDuration(duration)}</span>
               </div>
@@ -148,14 +155,18 @@ export function NodeDetailPanel() {
                 <dd className="text-primary truncate">{exec.agentName || '—'}</dd>
                 {exec.startedAt && (
                   <>
-                    <dt className="text-muted">开始</dt>
-                    <dd className="text-primary tabular-nums">{new Date(exec.startedAt).toLocaleTimeString()}</dd>
+                    <dt className="text-muted">{t('开始')}</dt>
+                    <dd className="text-primary tabular-nums">
+                      {new Date(exec.startedAt).toLocaleTimeString(locale())}
+                    </dd>
                   </>
                 )}
                 {exec.reported && (
                   <>
-                    <dt className="text-muted">回执</dt>
-                    <dd className="text-primary">{exec.reported === 'done' ? '已完成' : exec.reported}</dd>
+                    <dt className="text-muted">{t('回执')}</dt>
+                    <dd className="text-primary">
+                      {exec.reported === 'done' ? t('已完成') : exec.reported}
+                    </dd>
                   </>
                 )}
               </dl>
@@ -168,10 +179,10 @@ export function NodeDetailPanel() {
                       onClick={() => void closeRun(exec.runId!)}
                       className="h-7 px-2.5 rounded border border-border text-xs text-muted hover:text-red-500 inline-flex items-center gap-1"
                     >
-                      <Square className="w-3 h-3" /> 标记结束
+                      <Square className="w-3 h-3" /> {t('标记结束')}
                     </button>
                     <span className="text-[11px] text-muted/70 self-center">
-                      Agent 未回报完成时计时不会自动停止，可手动收口
+                      {t('Agent 未回报完成时计时不会自动停止，可手动收口')}
                     </span>
                   </>
                 )}
@@ -181,20 +192,20 @@ export function NodeDetailPanel() {
                       onClick={() => (exec.runId ? void accept(exec.runId, [node.id]) : void acceptNode(node.id))}
                       className="h-7 px-2.5 rounded bg-success text-white text-xs inline-flex items-center gap-1"
                     >
-                      <Check className="w-3 h-3" /> 通过并完成
+                      <Check className="w-3 h-3" /> {t('通过并完成')}
                     </button>
                     <button
                       onClick={() => setShowFeedback(v => !v)}
                       className="h-7 px-2.5 rounded border border-border text-xs text-primary hover:bg-base inline-flex items-center gap-1"
                     >
-                      <XCircle className="w-3 h-3" /> 驳回
+                      <XCircle className="w-3 h-3" /> {t('驳回')}
                     </button>
                     {exec.runId && (
                       <button
                         onClick={() => openRun(exec.runId!)}
                         className="h-7 px-2.5 rounded border border-border text-xs text-muted hover:text-primary"
                       >
-                        执行详情
+                        {t('执行详情')}
                       </button>
                     )}
                   </>
@@ -205,19 +216,19 @@ export function NodeDetailPanel() {
                       onClick={() => void copyPrompt([node.id], 'receipt')}
                       className="h-7 px-2.5 rounded border border-border text-xs text-primary hover:bg-base inline-flex items-center gap-1"
                     >
-                      <ClipboardCheck className="w-3 h-3" /> 重新复制（带回执）
+                      <ClipboardCheck className="w-3 h-3" /> {t('重新复制（带回执）')}
                     </button>
                     <button
                       onClick={() => void dismissNode(node.id)}
                       className="h-7 px-2.5 rounded border border-border text-xs text-muted hover:text-primary"
                     >
-                      忽略
+                      {t('忽略')}
                     </button>
                   </>
                 )}
                 {exec.state === 'queued' && (
                   <span className="text-[11px] text-muted inline-flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" /> 等待中
+                    <Loader2 className="w-3 h-3 animate-spin" /> {t('等待中')}
                   </span>
                 )}
               </div>
@@ -227,7 +238,7 @@ export function NodeDetailPanel() {
                   <textarea
                     value={feedback}
                     onChange={e => setFeedback(e.target.value)}
-                    placeholder="驳回原因（会写回节点备注）"
+                    placeholder={t('驳回原因（会写回节点备注）')}
                     className="w-full h-20 px-2 py-1.5 rounded border border-border bg-base text-xs outline-none focus:border-accent resize-none"
                   />
                   <div className="flex gap-2">
@@ -239,13 +250,13 @@ export function NodeDetailPanel() {
                       }}
                       className="h-7 px-2.5 rounded bg-red-500 text-white text-xs"
                     >
-                      确认驳回
+                      {t('确认驳回')}
                     </button>
                     <button
                       onClick={() => setShowFeedback(false)}
                       className="h-7 px-2.5 rounded border border-border text-xs text-muted"
                     >
-                      取消
+                      {t('取消')}
                     </button>
                   </div>
                 </div>
@@ -255,23 +266,25 @@ export function NodeDetailPanel() {
         </section>
 
         <section className="px-4 py-3">
-          <div className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2">补充说明</div>
+          <div className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2">{t('补充说明')}</div>
           <textarea
             value={note}
             onChange={e => {
               setNote(e.target.value);
               if (node) noteDraft.current = { id: node.id, note: e.target.value };
             }}
-            placeholder="补充说明（可选）——标题已经足够清楚时不必填"
+            placeholder={t('补充说明（可选）——标题已经足够清楚时不必填')}
             className="w-full h-40 px-2.5 py-2 rounded-md border border-border bg-base text-xs leading-5 outline-none focus:border-accent resize-none"
           />
-          <div className="text-[11px] text-muted/60 mt-1">自动保存 · 会随标题一起组装进 Prompt</div>
+          <div className="text-[11px] text-muted/60 mt-1">{t('自动保存 · 会随标题一起组装进 Prompt')}</div>
         </section>
       </div>
 
       <footer className="px-4 py-2.5 border-t border-border text-[11px] text-muted shrink-0 flex items-center gap-1.5">
         <ClipboardCheck className="w-3 h-3" />
-        {exec?.agentName ? `上次执行：${exec.agentName}` : '右键复制 Prompt，粘贴给你的 AI Agent'}
+        {exec?.agentName
+          ? t('上次执行：{name}', { name: exec.agentName })
+          : t('右键复制 Prompt，粘贴给你的 AI Agent')}
       </footer>
     </aside>
   );

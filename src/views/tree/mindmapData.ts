@@ -4,6 +4,7 @@
  */
 import type { MindElixirData, NodeObj } from 'mind-elixir';
 
+import { t } from '../../i18n';
 import type { NodeExecution, NodeStatus, TodoNode } from '../../ipc/types';
 import { execLabel } from '../../lib/exec';
 
@@ -219,7 +220,7 @@ export function decorateTopic(
   }
   check.classList.toggle('checked', done);
   check.setAttribute('aria-checked', String(done));
-  check.title = done ? '标记为待处理' : '标记为已完成';
+  check.title = done ? t('标记为待处理') : t('标记为已完成');
   check.onclick = e => {
     e.preventDefault();
     e.stopPropagation();
@@ -233,7 +234,7 @@ export function decorateTopic(
     tpc.appendChild(text);
   }
   tpc.text = text;
-  const display = nodeObj.topic || '未命名';
+  const display = nodeObj.topic || t('未命名');
   if (text.textContent !== display) text.textContent = display;
 
   tpc.classList.toggle('todo-done', done);
@@ -260,6 +261,10 @@ export function decorateTopic(
   badge.title = `${exec.agentName}${exec.model ? ` · ${exec.model}` : ''}${exec.workspace ? ` · ${exec.workspace}` : ''}`;
   badge.setAttribute(
     'aria-label',
-    exec.state === 'running' ? '执行中' : exec.state === 'awaiting_review' ? '待验收' : '执行失败',
+    exec.state === 'running'
+      ? t('执行中')
+      : exec.state === 'awaiting_review'
+        ? t('待验收')
+        : t('执行失败'),
   );
 }

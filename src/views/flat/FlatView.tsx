@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Check } from 'lucide-react';
 
 import type { TodoNode } from '../../ipc/types';
+import { useT } from '../../i18n';
 import { execLabel } from '../../lib/exec';
 import { formatDoneTime } from '../../lib/time';
 import { useTodoStore } from '../../stores/todoStore';
@@ -13,6 +14,7 @@ interface LeafRowData {
 }
 
 function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string) => void }) {
+  const t = useT();
   const toggle = useTodoStore(s => s.toggle);
   const { leaf, path } = data;
   const done = leaf.status === 'done';
@@ -33,7 +35,7 @@ function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string)
           e.stopPropagation();
           void toggle(leaf.id);
         }}
-        title={done ? '标记为待处理' : '标记为已完成'}
+        title={done ? t('标记为待处理') : t('标记为已完成')}
         className={[
           'shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors',
           done ? 'bg-success border-success' : 'border-muted hover:border-accent',
@@ -43,7 +45,7 @@ function LeafRow({ data, onReveal }: { data: LeafRowData; onReveal: (id: string)
       </button>
       <div className="flex-1 min-w-0">
         <div className={['text-sm truncate', done ? 'line-through text-muted' : 'text-primary'].join(' ')}>
-          {leaf.content || '未命名'}
+          {leaf.content || t('未命名')}
         </div>
         {path.length > 0 && (
           <div className="text-xs text-muted/70 truncate">{path.join(' / ')}</div>
@@ -87,6 +89,7 @@ interface FlatColumnProps {
 
 /** 单列：表头吸顶，列表独立滚动，两列互不影响。 */
 function FlatColumn({ title, count, tone, rows, empty, awaiting = 0, onReveal }: FlatColumnProps) {
+  const t = useT();
   const dot = tone === 'pending' ? 'bg-accent' : 'bg-success';
   const badge =
     tone === 'pending' ? 'bg-accent/15 text-accent' : 'bg-success/15 text-success';
@@ -100,7 +103,7 @@ function FlatColumn({ title, count, tone, rows, empty, awaiting = 0, onReveal }:
         </span>
         {awaiting > 0 && (
           <span className="px-1.5 py-0.5 rounded-full text-[11px] leading-3 text-warning bg-warning/10">
-            待验收 {awaiting}
+            {t('待验收 {n}', { n: awaiting })}
           </span>
         )}
       </header>
@@ -124,6 +127,7 @@ function FlatColumn({ title, count, tone, rows, empty, awaiting = 0, onReveal }:
  * 「待处理」在左、「已完成」在右，双栏并列各占一半宽度，各自独立滚动，充分利用宽屏空间。
  */
 export function FlatView() {
+  const t = useT();
   const nodes = useTodoStore(s => s.nodes);
   const roots = useTodoStore(s => s.roots);
   const childrenOf = useTodoStore(s => s.childrenOf);
@@ -138,7 +142,7 @@ export function FlatView() {
       while (cur) {
         const p = nodes[cur];
         if (!p) break;
-        parts.unshift(p.content || '未命名');
+        parts.unshift(p.content || t('未命名'));
         cur = p.parentId;
       }
       return parts;
@@ -165,7 +169,7 @@ export function FlatView() {
     pendingList.sort((a, b) => rank(a.leaf) - rank(b.leaf));
     doneList.sort((a, b) => b.leaf.updatedAt.localeCompare(a.leaf.updatedAt));
     return { pending: pendingList, done: doneList };
-  }, [nodes, roots, childrenOf]);
+  }, [nodes, roots, childrenOf, t]);
 
   const awaiting = pending.filter(d => d.leaf.execution?.state === 'awaiting_review').length;
 
@@ -174,20 +178,24 @@ export function FlatView() {
   return (
     <div className="absolute inset-0 grid grid-cols-2 divide-x divide-border">
       <FlatColumn
-        title="待处理"
+        title={t('待处理')}
         count={pending.length}
         tone="pending"
         rows={pending}
         awaiting={awaiting}
-        empty={done.length > 0 ? '没有待处理的叶子节点，去树里看看吧' : '树还是空的，去创建第一个任务'}
+        empty={
+          done.length > 0
+            ? t('没有待处理的叶子节点，去树里看看吧')
+            : t('树还是空的，去创建第一个任务')
+        }
         onReveal={onReveal}
       />
       <FlatColumn
-        title="已完成"
+        title={t('已完成')}
         count={done.length}
         tone="done"
         rows={done}
-        empty="还没有已完成的任务"
+        empty={t('还没有已完成的任务')}
         onReveal={onReveal}
       />
     </div>

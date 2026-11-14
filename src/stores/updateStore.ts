@@ -8,6 +8,7 @@
  */
 import { create } from 'zustand';
 
+import { t } from '../i18n';
 import { ipc } from '../ipc';
 import { updaterIpc, type DownloadProgress, type UpdateInfo } from '../ipc/update';
 import { useTodoStore } from './todoStore';
@@ -55,11 +56,11 @@ const IDLE_PROGRESS: DownloadProgress = { downloaded: 0, total: null };
 /** 把插件抛出的英文错误收敛成用户能看懂的一句话（原文只进 console）。 */
 function friendlyError(e: unknown): string {
   const raw = typeof e === 'string' ? e : e instanceof Error ? e.message : '';
-  if (/signature|minisign|verify/i.test(raw)) return '安装包校验失败，已取消更新';
+  if (/signature|minisign|verify/i.test(raw)) return t('安装包校验失败，已取消更新');
   if (/network|request|fetch|connect|timed? ?out|timeout|dns|unreachable/i.test(raw)) {
-    return '网络连接失败';
+    return t('网络连接失败');
   }
-  return raw || '未知错误';
+  return raw || t('未知错误');
 }
 
 /** 同一时刻只允许一个检查请求（自动 + 手动撞车时复用）。 */
@@ -91,7 +92,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
     // 开发模式没有安装包，检查会得到无法安装的假更新。
     if (!import.meta.env.PROD) {
-      if (manual) useTodoStore.getState().showToast('开发模式不检查更新');
+      if (manual) useTodoStore.getState().showToast(t('开发模式不检查更新'));
       return;
     }
 
@@ -101,7 +102,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         const next = await updaterIpc.check();
         if (!next) {
           set({ phase: 'idle', info: null, progress: IDLE_PROGRESS, dialogOpen: false });
-          if (manual) useTodoStore.getState().showToast('已是最新版本');
+          if (manual) useTodoStore.getState().showToast(t('已是最新版本'));
           return;
         }
         set({
@@ -116,7 +117,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         console.warn('[update] 检查更新失败', e);
         set({ phase: 'idle', info: null, error: null, dialogOpen: false });
         if (manual) {
-          useTodoStore.getState().showToast('检查更新失败，请检查网络后重试');
+          useTodoStore.getState().showToast(t('检查更新失败，请检查网络后重试'));
         }
       } finally {
         inFlight = null;
@@ -162,7 +163,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       await updaterIpc.dispose();
     } catch (e) {
       console.warn('[update] 打开下载页失败', e);
-      set({ phase: 'error', error: '无法打开浏览器，请手动访问 GitHub Releases' });
+      set({ phase: 'error', error: t('无法打开浏览器，请手动访问 GitHub Releases') });
     }
   },
 

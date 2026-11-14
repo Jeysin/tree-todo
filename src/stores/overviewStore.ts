@@ -6,8 +6,9 @@
  */
 import { create } from 'zustand';
 
+import { localizedError, t } from '../i18n';
 import { ipc } from '../ipc';
-import type { AppError, DayDetailItem, OverviewResponse, OverviewScope } from '../ipc/types';
+import type { DayDetailItem, OverviewResponse, OverviewScope } from '../ipc/types';
 import { availableYears, formatDay, rangeFor, type RangeMode } from '../lib/heatmap';
 
 interface OverviewState {
@@ -33,9 +34,7 @@ interface OverviewState {
 }
 
 function errMsg(e: unknown): string {
-  const ae = e as Partial<AppError> | undefined;
-  if (ae && typeof ae.message === 'string' && ae.message) return ae.message;
-  return '数据读取失败';
+  return localizedError(e, t('数据读取失败'));
 }
 
 let loadSeq = 0;

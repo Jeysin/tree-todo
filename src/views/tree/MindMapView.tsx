@@ -9,6 +9,7 @@ import type { Theme, Topic } from 'mind-elixir';
 import 'mind-elixir/style.css';
 
 import { NodeContextMenu, type MenuState } from '../../components/NodeContextMenu';
+import { localizedError, t, useLang } from '../../i18n';
 import { ipc } from '../../ipc';
 import type { Affected as TodoAffected, TodoNode } from '../../ipc/types';
 import { execLabel } from '../../lib/exec';
@@ -207,7 +208,7 @@ async function createNodeInMind(
     applyAffectedToMind(mind, { upserted: r.upserted, removed: [] }, id => void toggleNodeInMind(mind, id));
     return { id: r.newId, nodeObj };
   } catch (e) {
-    useTodoStore.getState().showToast(errText(e, '创建节点失败'));
+    useTodoStore.getState().showToast(errText(e, t('创建节点失败')));
     return null;
   }
 }
@@ -244,13 +245,12 @@ async function toggleNodeInMind(mind: MindElixir, id: string): Promise<void> {
     if (!mind.nodeData) return;
     applyAffectedToMind(mind, af, nextId => void toggleNodeInMind(mind, nextId));
   } catch (e) {
-    useTodoStore.getState().showToast(errText(e, '状态切换失败'));
+    useTodoStore.getState().showToast(errText(e, t('状态切换失败')));
   }
 }
 
 function errText(e: unknown, fallback: string): string {
-  const ae = e as { message?: unknown } | null;
-  return ae && typeof ae.message === 'string' && ae.message ? ae.message : fallback;
+  return localizedError(e, fallback);
 }
 
 function installMindBehavior(
@@ -321,7 +321,7 @@ function installMindBehavior(
     const st = useTodoStore.getState();
     const ids = tpcs.map(t => t.nodeObj.id);
     if (ids.some(id => st.nodes[id]?.parentId === null)) {
-      st.showToast('根任务不可删除');
+      st.showToast(t('根任务不可删除'));
       return;
     }
     const selected = new Set(ids);
@@ -337,14 +337,14 @@ function installMindBehavior(
     });
     const patches: TodoAffected[] = [];
     const removedTopics: Topic[] = [];
-    for (const t of top) {
-      const id = t.nodeObj.id;
+    for (const topic of top) {
+      const id = topic.nodeObj.id;
       if (!useTodoStore.getState().nodes[id]) continue;
       try {
         patches.push(await ipc.deleteNode(id));
-        removedTopics.push(t);
+        removedTopics.push(topic);
       } catch (e) {
-        useTodoStore.getState().showToast(errText(e, '删除失败'));
+        useTodoStore.getState().showToast(errText(e, t('删除失败')));
       }
     }
     if (patches.length === 0) return;
@@ -355,7 +355,12 @@ function installMindBehavior(
     applyAffectedToMind(mind, merged, onToggle);
     useTodoStore
       .getState()
-      .showToast(firstTitle ? `已删除「${firstTitle}」· 撤销` : '已删除 · 撤销', true);
+      .showToast(
+        firstTitle
+          ? t('已删除「{name}」· 撤销', { name: firstTitle })
+          : t('已删除 · 撤销'),
+        true,
+      );
   };
 
   // 4) 拖拽移动：先 Rust，再本地移动；折叠父节点由 Rust 自动展开。
@@ -376,7 +381,7 @@ function installMindBehavior(
       try {
         patches.push(await ipc.moveNode(id, pos.parentId, offset));
       } catch (e) {
-        useTodoStore.getState().showToast(errText(e, '移动失败'));
+        useTodoStore.getState().showToast(errText(e, t('移动失败')));
         // 多选拖拽可能只成功了一部分：重新拉取 Rust 快照，避免本地树与数据层分叉。
         if (patches.length > 0) void useTodoStore.getState().loadTree();
         return null;
@@ -421,7 +426,7 @@ function installMindBehavior(
       await baseMoveUp(target);
       applyAffectedToMind(mind, af, onToggle);
     } catch (e) {
-      useTodoStore.getState().showToast(errText(e, '移动失败'));
+      useTodoStore.getState().showToast(errText(e, t('移动失败')));
     }
   };
 
@@ -439,7 +444,7 @@ function installMindBehavior(
       await baseMoveDown(target);
       applyAffectedToMind(mind, af, onToggle);
     } catch (e) {
-      useTodoStore.getState().showToast(errText(e, '移动失败'));
+      useTodoStore.getState().showToast(errText(e, t('移动失败')));
     }
   };
 
@@ -478,8 +483,10 @@ export function MindMapView() {
   const flashId = useTodoStore(s => s.flashId);
   const revealTarget = useTodoStore(s => s.revealTarget);
   const createRequest = useTodoStore(s => s.createRequest);
+  const deleteRequest = useTodoStore(s => s.deleteRequest);
   const searchOpen = useTodoStore(s => s.searchOpen);
   const theme = useTodoStore(s => s.theme);
+  const lang = useLang();
   const hideDone = useTodoStore(s => s.hideDone);
 
   selectedRef.current = selectedId;
@@ -592,7 +599,7 @@ export function MindMapView() {
           .updateContent(id, content)
           .catch(() => null);
         if (!af) {
-          useTodoStore.getState().showToast('保存失败');
+          useTodoStore.getState().showToast(t('保存失败'));
           // 保存失败：用 Rust 快照回滚本地节点内容。
           const current = mindRef.current;
           if (current) current.refresh();
@@ -694,7 +701,7 @@ export function MindMapView() {
     } else {
       syncNodeMetadata(mind, nodes, onToggle);
     }
-  }, [nodes, roots, childrenOf, onToggle, hideDone]);
+  }, [nodes, roots, childrenOf, onToggle, hideDone, lang]);
 
   // 平铺视图 / 搜索跳转：展开祖先由 store.revealNode 完成，这里只负责选中 + 滚入视口。
   useEffect(() => {
@@ -718,6 +725,19 @@ export function MindMapView() {
     if (!parentId) return;
     void createChildAndEdit(mind, parentId, createRequest.position, skipSync);
   }, [createRequest]);
+
+  // 右键菜单「删除节点」：复用 Del 键的删除路径（removeNodes 已被接管，
+  // 含根节点保护、级联剔除与撤销提示），避免两套删除逻辑分叉。
+  useEffect(() => {
+    if (!deleteRequest) return;
+    const mind = mindRef.current;
+    useTodoStore.getState().clearDeleteRequest();
+    if (!mind) return;
+    const tpcs = deleteRequest.nodeIds
+      .map(id => findTopic(mind, id))
+      .filter((t): t is TopicWithText => t !== null);
+    if (tpcs.length > 0) void mind.removeNodes(tpcs);
+  }, [deleteRequest]);
 
   // 搜索跳转 / 新建节点的短暂高亮。
   useEffect(() => {

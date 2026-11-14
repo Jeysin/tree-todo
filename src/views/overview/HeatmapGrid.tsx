@@ -4,12 +4,14 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useLang, useT } from '../../i18n';
 import type { DayCount } from '../../ipc/types';
 import {
   buildCalendar,
   computeThresholds,
   formatDateShort,
   formatDay,
+  weekdayLabels,
   type HeatCell,
 } from '../../lib/heatmap';
 
@@ -68,6 +70,8 @@ interface Props {
 }
 
 export function HeatmapGrid({ days, selectedDate, loading, onSelect }: Props) {
+  const t = useT();
+  const lang = useLang();
   const wrapRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [metrics, setMetrics] = useState({ cell: 10, gap: 3 });
@@ -101,7 +105,7 @@ export function HeatmapGrid({ days, selectedDate, loading, onSelect }: Props) {
       formatDay(new Date()),
     );
     return { weeks: model.weeks, thresholds };
-  }, [days]);
+  }, [days, lang]);
 
   // 默认滚到最右（最近一周）。
   useEffect(() => {
@@ -118,7 +122,7 @@ export function HeatmapGrid({ days, selectedDate, loading, onSelect }: Props) {
   if (loading && days.length === 0) {
     return (
       <div className="h-[110px] flex items-center justify-center text-xs text-muted">
-        正在读取完成记录…
+        {t('正在读取完成记录…')}
       </div>
     );
   }
@@ -157,9 +161,9 @@ export function HeatmapGrid({ days, selectedDate, loading, onSelect }: Props) {
               className="grid shrink-0"
               style={{ width: LABEL_WIDTH, gridTemplateRows: `repeat(7, ${cell}px)`, rowGap: gap }}
             >
-              {['一', '二', '三', '四', '五', '六', '日'].map((label, index) => (
+              {weekdayLabels().map((label, index) => (
                 <span
-                  key={label}
+                  key={index}
                   className="text-[9px] leading-none text-muted flex items-center select-none"
                 >
                   {index % 2 === 0 ? label : ''}
@@ -169,7 +173,7 @@ export function HeatmapGrid({ days, selectedDate, loading, onSelect }: Props) {
 
             <div
               role="grid"
-              aria-label="日历热力图：每格是一天，颜色越深完成的任务越多"
+              aria-label={t('日历热力图：每格是一天，颜色越深完成的任务越多')}
               className="grid grid-flow-col"
               style={{
                 gridTemplateRows: `repeat(7, ${cell}px)`,
@@ -195,7 +199,7 @@ export function HeatmapGrid({ days, selectedDate, loading, onSelect }: Props) {
 
       <div className="mt-2 flex items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 text-[10px] text-muted select-none">
-          <span>少</span>
+          <span>{t('少')}</span>
           {LEVEL_CLASS.map((cls, index) => (
             <span
               key={cls}
@@ -203,20 +207,20 @@ export function HeatmapGrid({ days, selectedDate, loading, onSelect }: Props) {
               style={{ width: cell, height: cell }}
               title={
                 index === 0
-                  ? '0 个'
+                  ? t('{n} 个', { n: 0 })
                   : index === 1
-                    ? `1–${thresholds[0]} 个`
+                    ? t('1–{n} 个', { n: thresholds[0] })
                     : index === 2
-                      ? `${thresholds[0] + 1}–${thresholds[1]} 个`
+                      ? t('{a}–{b} 个', { a: thresholds[0] + 1, b: thresholds[1] })
                       : index === 3
-                        ? `${thresholds[1] + 1}–${thresholds[2]} 个`
-                        : `≥ ${thresholds[2] + 1} 个`
+                        ? t('{a}–{b} 个', { a: thresholds[1] + 1, b: thresholds[2] })
+                        : t('≥ {n} 个', { n: thresholds[2] + 1 })
               }
             />
           ))}
-          <span>多</span>
+          <span>{t('多')}</span>
         </div>
-        <span className="text-[10px] text-muted/80 select-none">按本地 00:00 分日</span>
+        <span className="text-[10px] text-muted/80 select-none">{t('按本地 00:00 分日')}</span>
       </div>
     </div>
   );
@@ -233,8 +237,12 @@ function Cell({
   selected: boolean;
   onSelect: (date: string) => void;
 }) {
+  const t = useT();
   const disabled = cell.outside || cell.future;
-  const label = `${formatDateShort(cell.date)}，完成 ${cell.count} 个任务`;
+  const label = t('{date}，完成 {n} 个任务', {
+    date: formatDateShort(cell.date),
+    n: cell.count,
+  });
   return (
     <button
       type="button"
@@ -242,7 +250,7 @@ function Cell({
       disabled={disabled}
       aria-label={label}
       aria-selected={selected}
-      title={disabled ? formatDateShort(cell.date) : `${label}（点击查看明细）`}
+      title={disabled ? formatDateShort(cell.date) : `${label} · ${t('点击查看明细')}`}
       onClick={() => onSelect(cell.date)}
       style={{ width: size, height: size }}
       className={[
