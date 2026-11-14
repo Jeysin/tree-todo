@@ -3,11 +3,11 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [2.1.0] — 2026-11-14
 
 ### 新增
 
-- **全局总览与日历热力图**（v2.2）：侧栏新增常驻「总览」入口（带今日完成数徽标）与 `⌘/Ctrl+4` 快捷键；GitHub 风格 53×7 年度网格反映每天完成的**叶子**任务数，配 4 个 KPI（范围内完成 / 活跃天数 / 当前连续 / 最长连续）与当日明细下钻定位。
+- **全局总览与日历热力图**：侧栏新增常驻「总览」入口（带今日完成数徽标）与 `⌘/Ctrl+4` 快捷键；GitHub 风格 53×7 年度网格反映每天完成的**叶子**任务数，配 4 个 KPI（范围内完成 / 活跃天数 / 当前连续 / 最长连续）与当日明细下钻定位。
   - 新增全局数据区 `app_data_dir/global.db`（独立 schema）：只存可从文档库重算的物化聚合，删掉后启动自动重建；文档库 schema 保持 v4。
   - 一致性走最终一致：节点变更标脏 → 防抖 worker 重算；查询前 flush + 文档库指纹对账兜底。热力图是派生数据，永不阻塞或回滚用户操作。
   - 口径只数叶子，父节点不计；回收站文档整体不计入（移入即下降、恢复即回来）；日界固定本地 00:00。规则见 `docs/10-calendar-heatmap-design.md`。
@@ -158,5 +158,6 @@ AI Agent 协同改为「复制 Prompt + MCP 回执」，不再由应用主动派
 - 节点 checkbox 与文本同行并相对节点垂直居中，长文本不再把 checkbox 挤到单独一行。
 - 平铺视图改为左右双栏、各自独立滚动，充分利用宽屏空间。
 
+[2.1.0]: https://github.com/Jeysin/tree-todo/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Jeysin/tree-todo/releases/tag/v2.0.0
 [1.0.0]: https://github.com/Jeysin/tree-todo/releases/tag/v1.0.0

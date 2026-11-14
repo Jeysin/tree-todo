@@ -73,7 +73,7 @@ tree-todo 的回答就是「树形待办」：
 ### 3.4 数据存储
 
 - **本地 SQLite，一文档一库**（v0.3 起）：`app_data_dir/documents.json` 存文档 / 目录索引，`app_data_dir/docs/{doc_id}.db` 存每份文档的节点树，回收站文件在 `app_data_dir/trash/`。
-- **全局派生库**（v2.2 起）：`app_data_dir/global.db` 存跨文档数据的物化聚合（当前是日历热力图 `leaf_done_daily`）。硬规则：只放能从文档库重算出来的数据，删除后启动自动重建；文档库 schema 不因它改动。见 `10-calendar-heatmap-design.md` §4。
+- **全局派生库**（v2.1.0 起）：`app_data_dir/global.db` 存跨文档数据的物化聚合（当前是日历热力图 `leaf_done_daily`）。硬规则：只放能从文档库重算出来的数据，删除后启动自动重建；文档库 schema 不因它改动。见 `10-calendar-heatmap-design.md` §4。
 - 随用随存、零配置、易备份（复制 `app_data_dir` 即可）。
 - v0.1 无云同步；多设备同步是 v1.x+ 的远期课题（见 `05-roadmap.md`）。
 - 不采用 JSON 文件存储树：树可无限增长，JSON 全量读写无法支撑增量操作与万级节点性能（文档索引很小，仍用 JSON）。
@@ -124,7 +124,7 @@ tree-todo/
 │   │   ├── tree/             # 树形（脑图）视图：画布、节点、连线、视口控制
 │   │   ├── flat/             # 平铺视图：叶子分组列表
 │   │   ├── stats/            # 文档级统计（原「统计」tab）
-│   │   └── overview/         # 全局总览 + 日历热力图（v2.2）
+│   │   └── overview/         # 全局总览 + 日历热力图（v2.1.0）
 │   ├── stores/               # Zustand：数据快照、选中/折叠、视图模式
 │   ├── ipc/                  # Tauri command 的 TS 封装（唯一 IPC 出口）
 │   ├── lib/                  # 前端纯函数（布局换算等）
@@ -136,8 +136,8 @@ tree-todo/
 │   │   ├── model.rs          # Node 等核心数据结构
 │   │   ├── db/               # SQLite 访问、迁移
 │   │   ├── propagate.rs      # 状态传播引擎（领域核心）
-│   │   ├── global_db.rs      # 全局派生库（global.db，v2.2）
-│   │   ├── stats.rs          # 跨文档统计同步与查询（v2.2）
+│   │   ├── global_db.rs      # 全局派生库（global.db，v2.1.0）
+│   │   ├── stats.rs          # 跨文档统计同步与查询（v2.1.0）
 │   │   └── error.rs          # 统一错误类型
 │   └── tauri.conf.json
 ├── docs/                     # 技术文档（本目录）
@@ -163,5 +163,5 @@ tree-todo/
 
 - ❌ 多人协作 / 权限（单人工具）
 - ❌ 云同步（远期调研 iCloud / WebDAV，见路线图）
-- ❌ 日程安排 / 提醒 / 番茄钟（专注树形待办本身，避免功能蔓延；v2.2 的日历热力图是完成记录的回顾性统计，不是日程工具）
+- ❌ 日程安排 / 提醒 / 番茄钟（专注树形待办本身，避免功能蔓延；v2.1.0 的日历热力图是完成记录的回顾性统计，不是日程工具）
 - ❌ 甘特图、时间线视图（与「进度追踪」定位不同）

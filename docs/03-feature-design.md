@@ -27,8 +27,8 @@
 | P2 | 导出 / 导入（文档 / 目录 / 全部） | 与导出互逆的整体还原；不再支持「追加到现有文档」 | v0.5 |
 | P2 | 隐藏已完成 | 树形视图按文档记忆的过滤开关 | v0.5 |
 | P2 | 节点复制 / 粘贴 | 文档内与跨文档；整棵子树连结构、备注、顺序与完成状态一起复制；粘贴为选中节点的子节点 | v2.1 |
-| P1 | 全局总览 / 日历热力图 | 侧栏「总览」入口；53×7 年度网格反映每天完成的**叶子**数；跨全部活动文档聚合（回收站不计入）；KPI（范围完成 / 活跃天数 / 当前连续 / 最长连续）+ 当日明细下钻定位；统计范围用目录树式文档选择器（可搜索，见 `docs/10` §7.1.1） | v2.2 |
-| P2 | 启动恢复上次页面 | 关窗口前在总览 / 统计 / 回收站 / 某文档，重开即回到那一页；只恢复视图，不恢复滚动位置与选中日期 | v2.2 |
+| P1 | 全局总览 / 日历热力图 | 侧栏「总览」入口；53×7 年度网格反映每天完成的**叶子**数；跨全部活动文档聚合（回收站不计入）；KPI（范围完成 / 活跃天数 / 当前连续 / 最长连续）+ 当日明细下钻定位；统计范围用目录树式文档选择器（可搜索，见 `docs/10` §7.1.1） | v2.1.0 |
+| P2 | 启动恢复上次页面 | 关窗口前在总览 / 统计 / 回收站 / 某文档，重开即回到那一页；只恢复视图，不恢复滚动位置与选中日期 | v2.1.0 |
 | P1 | 自动更新 | 启动自动检查；左上角版本号与系统菜单双入口；弹窗展示版本介绍并下载安装（macOS / Linux 跳下载页） | v2.0.0 |
 | P2 | 快捷键自定义 / 多设备同步 / 协作 | 视产品反馈决定 | v1.x+ |
 
@@ -167,7 +167,7 @@
 
 ## 8. IPC 数据流约定（决策 D6）
 
-- command 清单（v0.5）：`get_tree`、`create_node`、`update_content`、`update_note`、`toggle_status`、`delete_node`、`move_node`、`set_collapsed`、`expand_nodes`、`collapse_all`、`undo`、`redo`；文档 / 目录：`list_documents`、`create_document`、`rename_document`、`delete_document`、`create_folder`、`rename_folder`、`delete_folder`、`switch_document`、`get_current_document`；导入导出：`export_document`、`export_folder`、`export_all`、`import_bundle`。v0.6 起 `move_document` / `move_folder` 增加 `position` 参数用于侧边栏排序，并新增 `get_settings` / `set_trash_retention_days`。v2.1 起新增 `copy_nodes` / `paste_nodes` / `clipboard_info`（节点复制粘贴，见 §4）。v2.2 起新增总览查询：`get_overview`（聚合 + KPI + 连续天数）、`get_overview_day`（某日明细）、`get_overview_today`（侧栏徽标）、`rebuild_overview`（手动全量重建）；均由 `stats.rs` 提供，查询前会先做一次对账（读己之写）。
+- command 清单（v0.5）：`get_tree`、`create_node`、`update_content`、`update_note`、`toggle_status`、`delete_node`、`move_node`、`set_collapsed`、`expand_nodes`、`collapse_all`、`undo`、`redo`；文档 / 目录：`list_documents`、`create_document`、`rename_document`、`delete_document`、`create_folder`、`rename_folder`、`delete_folder`、`switch_document`、`get_current_document`；导入导出：`export_document`、`export_folder`、`export_all`、`import_bundle`。v0.6 起 `move_document` / `move_folder` 增加 `position` 参数用于侧边栏排序，并新增 `get_settings` / `set_trash_retention_days`。v2.1 起新增 `copy_nodes` / `paste_nodes` / `clipboard_info`（节点复制粘贴，见 §4）。v2.1.0 起新增总览查询：`get_overview`（聚合 + KPI + 连续天数）、`get_overview_day`（某日明细）、`get_overview_today`（侧栏徽标）、`rebuild_overview`（手动全量重建）；均由 `stats.rs` 提供，查询前会先做一次对账（读己之写）。
 - `create_node` 额外返回 `newId`（前端创建后立即选中并进入编辑态）。
 - **`copy_nodes`** 只读、返回剪贴板摘要（顶层数 / 总节点数 / 摘要文案 / 来源文档），不生成历史；**`paste_nodes`** 返回 `newIds` + 受影响快照，前端据此选中首个新节点并触发结构全量 refresh；**`clipboard_info`** 供启动时恢复「粘贴」入口的可用态。
 - 每个**变更类** command 返回**受影响子树的最新快照**（操作节点 + 级联子孙 + 被传播修改的祖先链），前端 store 合并后受控刷新。

@@ -1,6 +1,6 @@
 # 11 · Linux 安装包与发布
 
-> 状态：**已实施**（2026-11-14），随 v2.1.0 发布
+> 状态：**已发布**（v2.1.0，2026-11-14）
 >
 > 关联：`.github/workflows/release.yml`、`scripts/updater-manifest.mjs`、`scripts/gitee-release.mjs`、`docs/08-auto-update.md`、`docs/09-gitee-release.md`
 >

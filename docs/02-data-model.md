@@ -53,7 +53,7 @@ CREATE INDEX idx_nodes_deleted ON nodes(deleted_at);
 > **查询铁律**：所有「视图查询」必须过滤 `deleted_at IS NULL`。v0.4 起节点删除是物理删除，该字段恒为 NULL；回收站只包含被删除的**文档**。
 > `completed_at` 由 `update_status` 与级联 SQL 统一维护（done → now，pending → NULL），不得手工赋值。
 
-**全局派生库（v2.2，独立文件 `global.db`，不改变文档库 schema）**：
+**全局派生库（v2.1.0，独立文件 `global.db`，不改变文档库 schema）**：
 
 ```sql
 -- app_data_dir/global.db；与文档库版本解耦（GLOBAL_SCHEMA = 1）
@@ -190,7 +190,7 @@ stateDiagram-v2
 - **跨文档**：切换文档只清撤销历史、不清剪贴板，所以「文档 A 复制 → 切到文档 B 粘贴」是同一套流程；源文档随后被删除或移入回收站也不影响，因为快照已脱离数据库。应用退出后剪贴板失效。
 - 实现位于 `src-tauri/src/clipboard.rs`（纯数据逻辑 + 单测）与 `commands/nodes.rs`（事务编排）；前端只负责把 `newIds` 选中并把受影响快照合入渲染树。
 
-### 2.7 计数口径（v2.2 统一）
+### 2.7 计数口径（v2.1.0 统一）
 
 | 概念 | 定义 |
 |---|---|

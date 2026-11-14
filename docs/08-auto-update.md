@@ -558,7 +558,7 @@ publish-manifest:
 | `src/App.tsx` | 自动检查 + 菜单事件 + 挂载弹窗 |
 | `src-tauri/tauri.updater-test.conf.json` | 新增（仅本地测试） |
 | `scripts/updater-manifest.mjs` | 新增 |
-| `release-notes/v2.1.0.md` | 新增（模板） |
+| `release-notes/v2.1.0.md` | 新增（同时作为 GitHub / Gitee 的 Release 正文与更新弹窗内容） |
 | `.github/workflows/release.yml` | 签名 env + `publish-manifest` job + Linux 构建腿（产物自检 / 上传路径） |
 | `package.json` | 两个前端插件依赖 |
 
