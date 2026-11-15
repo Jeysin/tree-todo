@@ -15,6 +15,9 @@
  *   加超时、加重试、换 curl 都无效。同一批 109MB 在本机（国内出口）约 20 秒传完。
  *   所以自动镜像的 job 已从 release.yml 移除，这里只作为手动步骤使用。
  *
+ * 磁盘：产物下载到 $TMPDIR/tree-todo-gitee-xxxxxx，结束（成功 / 失败 / Ctrl-C）自动删除；
+ *   --assets-dir 时不动用户目录。详见 docs/09 §4.1。
+ *
  * 用法：
  *   pnpm release:gitee --tag v2.0.0
  *   pnpm release:gitee --tag v2.0.0 --assets-dir ./release-assets
@@ -171,9 +174,63 @@ function parseArgs(argv) {
   return out;
 }
 
+/**
+ * 致命错误。刻意用抛出而不是 process.exit：
+ * process.exit 会**跳过 finally**，而临时目录里可能正躺着 100MB+ 的安装包，
+ * 失败一次就在 /var/folders 里留一份没人清。
+ */
+class FatalError extends Error {}
+
 function fail(message) {
-  console.error(`[gitee-release] ${message}`);
-  process.exit(1);
+  throw new FatalError(message);
+}
+
+/** 当前在用的临时目录；null 表示走的是 --assets-dir，不动用户的文件。 */
+let activeTempDir = null;
+
+function cleanupTempDir() {
+  if (!activeTempDir) return;
+  try {
+    rmSync(activeTempDir, { recursive: true, force: true });
+  } catch {
+    // 删不掉不该影响退出码，留个可操作的提示
+    console.error(`[gitee-release] 临时目录清理失败，可手动删除：${activeTempDir}`);
+  }
+  activeTempDir = null;
+}
+
+/**
+ * 兜底清理上次异常退出（SIGKILL、断电、崩溃）留下的目录。
+ * 只动 1 小时前的——若同时跑着第二份，它的目录是新的，不会误删。
+ */
+function sweepStaleTempDirs() {
+  const base = tmpdir();
+  let names = [];
+  try {
+    names = readdirSync(base);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith('tree-todo-gitee-')) continue;
+    const path = join(base, name);
+    try {
+      if (Date.now() - statSync(path).mtimeMs < 60 * 60 * 1000) continue;
+      rmSync(path, { recursive: true, force: true });
+      log(`已清理上次残留的临时目录 ${name}`);
+    } catch {
+      // 权限不足或已被别人删掉，跳过
+    }
+  }
+}
+
+// Ctrl-C / kill 时 finally 不会执行，单独兜一层，避免下载到一半的产物留在磁盘上
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    console.error(`\n[gitee-release] 收到 ${signal}，清理临时文件后退出`);
+    cleanupTempDir();
+    process.exit(130);
+  });
 }
 
 function log(message) {
@@ -194,8 +251,6 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-if (!tag) fail('缺少 --tag（或 TAG / GITHUB_REF_NAME）');
-if (!/^v\d+\.\d+\.\d+/.test(tag)) fail(`tag 需要形如 vX.Y.Z，当前为 ${tag}`);
 if (!token) {
   console.error('[gitee-release] 没找到 Gitee 令牌，停止。按顺序找过这四处：');
   console.error('  1. 环境变量 GITEE_TOKEN');
@@ -431,12 +486,18 @@ async function uploadAttachment(releaseId, file) {
 }
 
 async function main() {
+  if (!tag) fail('缺少 --tag（或 TAG / GITHUB_REF_NAME）');
+  if (!/^v\d+\.\d+\.\d+/.test(tag)) fail(`tag 需要形如 vX.Y.Z，当前为 ${tag}`);
+
+  sweepStaleTempDirs();
+
   const notes = await resolveNotes();
   log(`发布说明来源：${notes.from}`);
 
-  const tempDir = args['assets-dir'] ? null : mkdtempSync(join(tmpdir(), 'tree-todo-gitee-'));
+  activeTempDir = args['assets-dir'] ? null : mkdtempSync(join(tmpdir(), 'tree-todo-gitee-'));
+  if (activeTempDir) log(`临时目录：${activeTempDir}（结束自动删除）`);
   try {
-    const files = args['assets-dir'] ? collectLocalAssets(args['assets-dir']) : await downloadAll(tempDir);
+    const files = args['assets-dir'] ? collectLocalAssets(args['assets-dir']) : await downloadAll(activeTempDir);
 
     if (requireComplete) {
       const missing = REQUIRED_GROUPS.filter(group => !files.some(file => group.match.test(file.name)));
@@ -515,8 +576,18 @@ async function main() {
     }
     log(`✓ 镜像完成：${uploadable.length} 个附件已在 Gitee ${tag}`);
   } finally {
-    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    cleanupTempDir();
   }
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  if (error instanceof FatalError) {
+    // 不走 process.exit：让 finally 里的临时目录清理先跑完，再以 1 退出
+    console.error(`[gitee-release] ${error.message}`);
+    process.exitCode = 1;
+  } else {
+    throw error;
+  }
+}
