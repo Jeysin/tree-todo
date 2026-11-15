@@ -3,6 +3,15 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **Gitee 镜像无法在 GitHub Actions 里跑**：v2.1.0 发布时 `publish-gitee` job 跑了 40 分钟撞超时被取消，Gitee 上只留下一个 1KB 的 `latest.json`。时间线显示 109MB 产物从 GitHub 下载只用了 10 秒，之后 39 分钟连一个 4.58MB 的 `.rpm` 都没传完（折算 <2KB/s）——海外 runner 到 gitee.com 的上传会被跨境链路卡住，加超时、加重试、换 `curl` 都无效。v1.0.0 / v2.0.0 的 Gitee 附件其实一直是本机补传的，这条自动路径从未验证过。
+  - `release.yml` 移除 `publish-gitee` job，并删除从未跑通的 `gitee-mirror.yml`；Gitee 镜像改为发版后本机执行 `pnpm release:gitee --tag vX.Y.Z`（国内出口同一批 109MB 约 20 秒）。
+  - `scripts/gitee-release.mjs`：每次上传加 20 分钟硬超时（原来链路卡住会无限期挂着），并打印每个附件的耗时与速率，用于区分「慢」与「卡住」；失败提示补充「重跑幂等，只补缺的部分」。
+  - 诊断过程与对照数据见 `docs/09-gitee-release.md` §7。
+
 ## [2.1.0] — 2026-11-14
 
 ### 新增
@@ -15,7 +24,7 @@
   - 统计范围改为**文档选择面板**（`DocPicker`，仿访达）：目录树可展开折叠、右侧显示目录内文档数、顶部可搜索名称，支持 `↑↓ ←→ ↵ Esc`；取代原先语义含糊的「当前文档」和会随文档数量膨胀的原生下拉。副标题随范围切换。年份选项从发布年 2026 推到今年并由当前日期推导，不逐年写死。
 - **记住最后停留的页面**：关窗口前在总览 / 统计 / 回收站 / 某个文档，下次打开就回到那一页（`localStorage['tree-todo.viewState']` 存 `viewMode / lastDocView / previousViewMode`）；当前文档仍由后端 `lastOpened` 决定。只恢复视图，不恢复滚动位置、选中日期等瞬时状态。
 - **节点复制 / 粘贴**：支持文档内与跨文档复制整棵子树（含父子结构、备注、同级顺序与完成状态），右键菜单与 `⌘/Ctrl+C`、`⌘/Ctrl+V` 双入口；粘贴为选中节点的子节点，一次粘贴记为一条撤销历史。按反馈调整为**连完成状态一起复制**（`status` + `completed_at` 原样保留，I4 的唯一例外），目标父按 I2 重算并自动展开，Agent 执行态不复制；规则见 `docs/02-data-model.md` §2.6。
-- **Gitee 发布渠道**：打 tag 后自动把 GitHub Release 的安装包镜像到 Gitee Release（`publish-gitee` job），也可用 `Mirror release to Gitee` 手动补传。两端产物同源、同一套 Ed25519 签名。用法与限制见 `docs/09-gitee-release.md`。
+- **Gitee 发布渠道**：Gitee Release 与 GitHub 同源、同一套 Ed25519 签名；发版后在本机执行 `pnpm release:gitee --tag vX.Y.Z` 补齐附件（起初设计成 CI 里自动镜像，v2.1.0 实测证伪，见「未发布 · 修复」）。用法与限制见 `docs/09-gitee-release.md`。
 - 新增 `pnpm release:gitee --tag vX.Y.Z`：本地一条命令完成「下载 GitHub 产物 → 建 Gitee Release → 传附件」，幂等可重跑。
 - **Linux 安装包**（v2.1.0）：发布矩阵新增 Ubuntu 22.04 构建腿，GitHub Release 同时提供 `.deb` / `.rpm` / `.AppImage`（含 Linux updater 签名 `.AppImage.sig`）；Gitee 镜像与 `--require-complete` 校验扩展到 10 类产物。
   - 兼容基线 Ubuntu 22.04+ / Debian 12+（glibc 2.35、WebKitGTK 4.1）；不在 24.04 上构建，避免抬高最低 glibc 版本。

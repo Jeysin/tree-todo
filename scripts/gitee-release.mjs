@@ -7,9 +7,15 @@
  *   Gitee Go 只提供 Linux/Windows 构建机（无 macOS），
  *   额度 200 构建分钟/仓库/月，也远不够一次三平台打包。
  *   所以安装包由 GitHub Actions 构建，本脚本负责把产物搬到 Gitee Release。
- *   方案与限制见 docs/09-gitee-release.md。
+ * 方案与限制见 docs/09-gitee-release.md。
  *
- * 用法（本地或 CI）：
+ * ⚠️ 必须在**国内网络的本机**执行，不要放进 GitHub Actions（docs/09 §7）：
+ *   GitHub 的 runner 全在海外，往 gitee.com 上传大文件会被跨境链路卡死——
+ *   v2.1.0 实测 4.58MB 的 .rpm 传了 39 分钟仍未完成（只有几 KB 的 latest.json 过得去），
+ *   加超时、加重试、换 curl 都无效。同一批 109MB 在本机（国内出口）约 20 秒传完。
+ *   所以自动镜像的 job 已从 release.yml 移除，这里只作为手动步骤使用。
+ *
+ * 用法：
  *   GITEE_TOKEN=xxx node scripts/gitee-release.mjs --tag v2.0.0
  *   GITEE_TOKEN=xxx node scripts/gitee-release.mjs --tag v2.0.0 --assets-dir ./release-assets
  *   GITEE_TOKEN=xxx node scripts/gitee-release.mjs --tag v2.0.0 --dry-run
@@ -41,7 +47,14 @@ const GITHUB_API = 'https://api.github.com';
 /** Gitee 单附件上限 100MB，超出的文件跳过并告警。 */
 const GITEE_MAX_ASSET_BYTES = 100 * 1024 * 1024;
 /** 上传重试次数；Gitee 大文件上传偶发 EPIPE，靠重试 + curl 兜底。 */
-const UPLOAD_ATTEMPTS = 5;
+const UPLOAD_ATTEMPTS = 3;
+/**
+ * 单次请求的硬超时。不加这个的话，链路卡住时 fetch 会一直挂着，
+ * 只能靠人肉 Ctrl-C（v2.1.0 的 CI 就是这么白烧 40 分钟的）。
+ * 上传给 20 分钟：79MB 的 AppImage 只要 66KB/s 就够，慢链路不至于被误杀。
+ */
+const UPLOAD_TIMEOUT_MS = 20 * 60 * 1000;
+const DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000;
 
 /** 需要镜像的产物：安装包本体、更新包、签名、更新清单。 */
 const ASSET_PATTERNS = [
@@ -116,6 +129,12 @@ function humanSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
+/** 上传速率，用来判断是「慢」还是「卡住」——这次排障最缺的就是这个数。 */
+function rate(bytes, seconds) {
+  if (!seconds || seconds <= 0) return '—';
+  return `${(bytes / 1024 / seconds).toFixed(0)} KB/s`;
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -187,7 +206,11 @@ async function downloadAsset(asset, dest) {
   for (const url of urls) {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        const response = await fetch(url, { headers, redirect: 'follow' });
+        const response = await fetch(url, {
+          headers,
+          redirect: 'follow',
+          signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+        });
         if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
         await pipeline(Readable.fromWeb(response.body), createWriteStream(dest));
         const size = statSync(dest).size;
@@ -302,19 +325,29 @@ async function uploadAttachment(releaseId, file) {
 
   let lastError = '';
   for (let attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt += 1) {
+    const startedAt = Date.now();
     try {
       // 每次重试都重建 FormData：body 写坏后不可复用
       const form = new FormData();
       form.append('file', new Blob([buffer], { type: 'application/octet-stream' }), file.name);
-      const response = await fetch(url, { method: 'POST', body: form });
+      const response = await fetch(url, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      });
       const text = await response.text();
-      if (response.ok) return true;
+      if (response.ok) {
+        const seconds = (Date.now() - startedAt) / 1000;
+        log(`  ${file.name}：${humanSize(file.size)} / ${seconds.toFixed(1)}s（${rate(file.size, seconds)}）`);
+        return true;
+      }
       lastError = `HTTP ${response.status} ${text.slice(0, 200)}`;
     } catch (error) {
       // EPIPE / ECONNRESET 等网络层错误也走重试
       lastError = String(error && error.cause ? error.cause.code || error.cause.message : error);
     }
-    log(`上传 ${file.name} 第 ${attempt} 次失败：${lastError}`);
+    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    log(`上传 ${file.name} 第 ${attempt} 次失败（耗时 ${seconds}s）：${lastError}`);
     if (attempt < UPLOAD_ATTEMPTS) await sleep(attempt * 3000);
   }
 
@@ -324,7 +357,7 @@ async function uploadAttachment(releaseId, file) {
       'curl',
       [
         '-sS', '--fail', '--retry', '3', '--retry-delay', '2',
-        '--connect-timeout', '30', '--max-time', '900',
+        '--connect-timeout', '30', '--max-time', '1200',
         '-F', `file=@${file.path}`, url.toString(),
       ],
       { stdio: ['ignore', 'pipe', 'pipe'] },
@@ -393,6 +426,9 @@ async function main() {
     }
 
     const failed = [];
+    const totalBytes = uploadable.reduce((sum, file) => sum + file.size, 0);
+    const startedAll = Date.now();
+    log(`准备上传 ${uploadable.length} 个附件，合计 ${humanSize(totalBytes)}（已存在同名附件的会跳过）`);
     for (const file of uploadable) {
       if (existing.some(asset => asset.name === file.name)) {
         log(`已存在 ${file.name}，跳过（需要替换请加 --overwrite）`);
@@ -400,17 +436,21 @@ async function main() {
       }
       log(`上传 ${file.name}（${humanSize(file.size)}）…`);
       const ok = await uploadAttachment(release.id, file);
-      if (ok) log(`✓ ${file.name}`);
-      else failed.push(file.name);
+      if (!ok) failed.push(file.name);
     }
 
     const names = (await listAttachments(release.id)).map(asset => asset.name);
     log(`Gitee release 现有附件：${names.join(', ') || '（无）'}`);
     log(`发布页：${releaseUrl}`);
+    log(`本次上传耗时 ${((Date.now() - startedAll) / 1000).toFixed(1)}s`);
 
     const missing = uploadable.map(file => file.name).filter(name => !names.includes(name));
     if (failed.length > 0 || missing.length > 0) {
-      fail(`镜像未完整：失败 ${failed.join(', ') || '无'}；缺失 ${missing.join(', ') || '无'}`);
+      fail(
+        `镜像未完整：失败 ${failed.join(', ') || '无'}；缺失 ${missing.join(', ') || '无'}\n` +
+          '  对照上面的「耗时 / 速率」判断原因：低于 100KB/s 基本是出口线路问题，换个网络重跑即可；\n' +
+          '  脚本是幂等的，已上传的附件会跳过，重跑只补缺的部分。',
+      );
     }
     log(`✓ 镜像完成：${uploadable.length} 个附件已在 Gitee ${tag}`);
   } finally {

@@ -17,7 +17,7 @@
 | 更新载体 | `.AppImage` + `.AppImage.sig`（Tauri updater 在 Linux 的唯一可安装格式） |
 | 应用内更新 | **不做**。Linux 只提示新版本，主按钮「前往下载」打开 GitHub Releases（决策见 `docs/08` D6） |
 | 兼容基线 | Ubuntu 22.04+ / Debian 12+（glibc 2.35、WebKitGTK 4.1） |
-| 分发 | GitHub Release + Gitee Release 镜像（10 类产物） |
+| 分发 | GitHub Release + Gitee Release（10 类产物；发版后本机执行 `pnpm release:gitee`，理由见 `docs/09` §7） |
 
 **一句话**：Windows / macOS 的发布链路不变，新增一条 `ubuntu-22.04` 腿出三种 Linux 包；Linux 的更新只负责「告诉你」，安装交给包管理器或用户。
 
@@ -82,7 +82,7 @@ Linux 腿在 `tauri-action` 之后增加产物自检：`deb/*.deb`、`rpm/*.rpm`
 下游：
 
 - `publish-manifest`：`latest.json` 增加 `linux-x86_64`，签名取 `*.AppImage.sig`；
-- `publish-gitee`：镜像 10 类产物，超时从 20 分钟放宽到 40 分钟（AppImage 约 70MB）；
+- Gitee 镜像**不在 CI 里**：跨境上传会卡死（v2.1.0 实测 4.58MB 传 39 分钟未完成），改由发版后本机执行 `pnpm release:gitee --tag vX.Y.Z`，见 `docs/09` §7；
 - 手动 `workflow_dispatch` 的 artifact 上传路径同步加入 Linux 产物。
 
 ---
@@ -155,7 +155,7 @@ Ubuntu 24.04 默认不带 FUSE2，AppImage 需先装 `libfuse2t64`，或加 `--a
 3. 启动后检查：树视图渲染、数据目录 `~/.local/share/com.jeysin.treetodo/`、复制 Prompt（原生剪贴板）、`xdg-open` 打开下载页 / 目录、Help 菜单「检查更新…」、MCP 服务端口与 token。
 4. 更新检查：有更新时弹窗主按钮为「前往下载」；无更新手动检查提示「已是最新版本」；有任务执行中不出现重启提示。
 5. `latest.json` 同时含 `darwin-aarch64` / `darwin-x86_64` / `windows-x86_64` / `linux-x86_64` 四个键，Linux 签名与 `.AppImage.sig` 一致。
-6. Gitee Release 附件数为 10（源码包另计）；`--require-complete` 通过。
+6. 本机执行 `pnpm release:gitee --tag vX.Y.Z --require-complete` 后，Gitee Release 附件数为 10（源码包另计）；日志里每个附件的速率应在 MB/s 量级（若是 KB/s 量级，说明出口线路有问题，换网络重跑）。
 
 ---
 

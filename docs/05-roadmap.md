@@ -101,7 +101,7 @@
 
 ## M3.9 · v2.1.0
 
-- **Linux 安装包**：发布矩阵新增 Ubuntu 22.04 构建腿，产出 `.deb` / `.rpm` / `.AppImage`（含 updater 签名）；Gitee 镜像同步扩展到 10 类产物；
+- **Linux 安装包**：发布矩阵新增 Ubuntu 22.04 构建腿，产出 `.deb` / `.rpm` / `.AppImage`（含 updater 签名）；Gitee 镜像的齐全校验扩展到 10 类产物；
 - **Linux 自动更新**：只提示新版本，安装统一跳 Releases 下载页（`.deb` / `.rpm` 无法原地替换）；
 - 方案、兼容性基线与验收清单见 `docs/11-linux-release.md`。
 
