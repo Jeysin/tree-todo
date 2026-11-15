@@ -110,12 +110,14 @@ curl -s "https://gitee.com/api/v5/user?access_token=$(security find-generic-pass
 `tree-todo-gitee`，脚本自己去取，不依赖 shell 里有没有 `export`：
 
 ```bash
-# 存（-U = 已存在则覆盖，可反复执行）
-security add-generic-password -s tree-todo-gitee -a "$USER" -w "你的令牌" -U
+# 存：-w 放在最后，security 会提示输入两遍，令牌不会落进 shell 历史
+security add-generic-password -s tree-todo-gitee -a "$USER" -U -w
 
 # 以后忘了在哪，一条命令找回
 security find-generic-password -s tree-todo-gitee -w
 ```
+
+（`-U` = 已存在则覆盖，可反复执行。若你不在意历史记录，也可以直接把值写在 `-w` 后面。）
 
 图形界面里同样找得到：**钥匙串访问 → 搜索 `tree-todo-gitee`**（类别为「密码」）。
 
