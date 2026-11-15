@@ -96,21 +96,59 @@ git push gitee main --tags                                # 首次同步代码�
 Gitee → 头像 → **设置** → **私人令牌** → 生成，权限勾选 **projects**。
 令牌只显示一次，复制后立刻存到本机的私密配置里（§3.3）。
 
+> 手上已经找不到这枚令牌了？Gitee 不支持回看，最省事的做法是**重新生成一枚、删掉旧的**，
+> 反正它只在这台机器上用，不影响任何 CI。
+
 ```bash
-curl -s "https://gitee.com/api/v5/user?access_token=$GITEE_TOKEN" | head -c 200   # 返回 login 即有效
+# 存进钥匙串后（§3.3）据此校验，返回 login 即有效
+curl -s "https://gitee.com/api/v5/user?access_token=$(security find-generic-password -s tree-todo-gitee -w)" | head -c 200
 ```
 
-### 3.3 令牌放哪：本机环境变量
+### 3.3 令牌放哪：macOS 钥匙串（存一次，之后不用管）
 
-令牌只放本机。`release.yml` 里已经没有使用 `GITEE_TOKEN` 的 job 了（§7），不要再配到仓库 Secrets：
+令牌一年只用几次，**真正的风险不是泄漏而是忘了放哪**。所以位置固定为钥匙串服务名
+`tree-todo-gitee`，脚本自己去取，不依赖 shell 里有没有 `export`：
 
 ```bash
-export GITEE_TOKEN=xxx          # 建议写进 ~/.zshrc 之类的私密配置，不要进仓库
-pnpm release:gitee --tag v2.1.0 --dry-run      # 打印计划即说明令牌可用
+# 存（-U = 已存在则覆盖，可反复执行）
+security add-generic-password -s tree-todo-gitee -a "$USER" -w "你的令牌" -U
+
+# 以后忘了在哪，一条命令找回
+security find-generic-password -s tree-todo-gitee -w
+```
+
+图形界面里同样找得到：**钥匙串访问 → 搜索 `tree-todo-gitee`**（类别为「密码」）。
+
+> 为什么不是 `~/.zshrc`：那是明文，会进 Time Machine / iCloud 备份，且每个子进程都能读到；
+> 更麻烦的是复制令牌时容易顺手粘进终端，落进 `~/.zsh_history`。钥匙串由系统加密保管，
+> 只在本机、只在登录态可解。
+
+脚本的解析顺序（前一处命中即停，所以临时换号只需设环境变量，不必改钥匙串）：
+
+| 顺序 | 来源 | 用途 |
+|---|---|---|
+| 1 | 环境变量 `GITEE_TOKEN` | 临时换号 / CI |
+| 2 | `GITEE_TOKEN_FILE` 指向的文件 | 想用文件时 |
+| 3 | macOS 钥匙串 `tree-todo-gitee` | **推荐，日常用这个** |
+| 4 | `~/.config/tree-todo/gitee.env` | 非 macOS 或不想用钥匙串时的兜底 |
+
+第 4 项写法（记得 `chmod 600`）：
+
+```bash
+mkdir -p ~/.config/tree-todo && printf 'GITEE_TOKEN=%s\n' "你的令牌" > ~/.config/tree-todo/gitee.env
+chmod 600 ~/.config/tree-todo/gitee.env
+```
+
+验证通了会有明确回显，不用猜是读到了哪一份：
+
+```bash
+pnpm release:gitee --tag v2.1.0 --dry-run
+# [gitee-release] 令牌来源：macOS 钥匙串
 ```
 
 > 如果你之前配过仓库 Secret `GITEE_TOKEN`，现在**没有任何工作流引用它，建议删掉**：
 > 一枚长期有效、带 `projects` 写权限的令牌不该躺在 CI 里。删掉不影响本机执行。
+> 若曾把令牌粘进终端，顺手清一下：`grep -n GITEE_TOKEN ~/.zsh_history`，有就删掉那几行。
 
 ---
 
@@ -125,7 +163,7 @@ git tag v2.1.0 && git push origin v2.1.0
 
 # 3) 等 Actions 的 build（三腿）+ Publish updater manifest 全绿
 # 4) 在本机补 Gitee（国内网络，见 §7 为什么不在 CI 里做）
-export GITEE_TOKEN=xxx
+#    令牌已在钥匙串里，无需 export（§3.3）
 pnpm release:gitee --tag v2.1.0 --require-complete
 
 git push gitee main --tags    # 可选：让 Gitee 仓库也有 tag
@@ -137,7 +175,6 @@ git push gitee main --tags    # 可选：让 Gitee 仓库也有 tag
 ### 4.2 补传 / 重传（不重新构建）
 
 ```bash
-export GITEE_TOKEN=xxx
 pnpm release:gitee --tag v2.0.0                  # 从 GitHub 下载后上传；已存在的附件跳过
 pnpm release:gitee --tag v2.0.0 --dry-run        # 只打印计划
 pnpm release:gitee --tag v2.0.0 --assets-dir ./release-assets   # 用本地已有产物

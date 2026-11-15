@@ -16,9 +16,13 @@
  *   所以自动镜像的 job 已从 release.yml 移除，这里只作为手动步骤使用。
  *
  * 用法：
- *   GITEE_TOKEN=xxx node scripts/gitee-release.mjs --tag v2.0.0
- *   GITEE_TOKEN=xxx node scripts/gitee-release.mjs --tag v2.0.0 --assets-dir ./release-assets
- *   GITEE_TOKEN=xxx node scripts/gitee-release.mjs --tag v2.0.0 --dry-run
+ *   pnpm release:gitee --tag v2.0.0
+ *   pnpm release:gitee --tag v2.0.0 --assets-dir ./release-assets
+ *   pnpm release:gitee --tag v2.0.0 --dry-run
+ *
+ * 令牌：本机存在 macOS 钥匙串 `tree-todo-gitee` 即可，脚本自己取（docs/09 §3.3）；
+ *   环境变量 GITEE_TOKEN 仍然优先，用于临时换号。存储命令：
+ *   security add-generic-password -s tree-todo-gitee -a "$USER" -w "令牌" -U
  *
  * 参数：
  *   --tag <vX.Y.Z>       必填（也可用 TAG / GITHUB_REF_NAME）
@@ -37,7 +41,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createWriteStream, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -90,7 +94,58 @@ const args = parseArgs(process.argv.slice(2));
 const tag = args.tag || process.env.TAG || process.env.GITHUB_REF_NAME;
 const giteeRepo = args.repo || process.env.GITEE_REPO || 'Jeysin/tree-todo';
 const sourceRepo = args['source-repo'] || process.env.GITHUB_REPOSITORY || 'Jeysin/tree-todo';
-const token = process.env.GITEE_TOKEN || '';
+/**
+ * 本机令牌只存一处：macOS 钥匙串 `tree-todo-gitee`（docs/09 §3.3）。
+ * 令牌一年只用几次，真正的风险不是泄漏而是「忘了放哪」——所以位置写死在代码里，
+ * 由脚本自己去取，不需要每次 export，也不需要翻 dotfile。
+ * 环境变量仍然优先，留着做临时换号 / CI 用。
+ */
+const KEYCHAIN_SERVICE = 'tree-todo-gitee';
+const TOKEN_FILE = join(homedir(), '.config', 'tree-todo', 'gitee.env');
+
+function readTokenFromKeychain() {
+  if (process.platform !== 'darwin') return '';
+  try {
+    // -w 只输出密码本身；未存过时 security 退出码非 0，静默跳过
+    return execFileSync('security', ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function readTokenFromFile(path) {
+  try {
+    // 兼容 export GITEE_TOKEN=xxx / GITEE_TOKEN=xxx / 带引号三种写法
+    const match = readFileSync(path, 'utf8').match(
+      /^[ \t]*(?:export[ \t]+)?GITEE_TOKEN[ \t]*=[ \t]*["']?([^"'\s]+)["']?/m,
+    );
+    return match ? match[1].trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+function resolveToken() {
+  const candidates = [
+    ['环境变量 GITEE_TOKEN', () => (process.env.GITEE_TOKEN || '').trim()],
+    [
+      'GITEE_TOKEN_FILE 指向的文件',
+      () => (process.env.GITEE_TOKEN_FILE ? readTokenFromFile(process.env.GITEE_TOKEN_FILE) : ''),
+    ],
+    ['macOS 钥匙串', readTokenFromKeychain],
+    [TOKEN_FILE, () => readTokenFromFile(TOKEN_FILE)],
+  ];
+  for (const [source, read] of candidates) {
+    const found = read();
+    if (found) return { token: found, source };
+  }
+  return { token: '', source: '' };
+}
+
+const { token, source: tokenSource } = resolveToken();
 const ghToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
 
 const dryRun = args.flags.has('dry-run');
@@ -142,10 +197,16 @@ function sleep(ms) {
 if (!tag) fail('缺少 --tag（或 TAG / GITHUB_REF_NAME）');
 if (!/^v\d+\.\d+\.\d+/.test(tag)) fail(`tag 需要形如 vX.Y.Z，当前为 ${tag}`);
 if (!token) {
-  console.error('[gitee-release] 缺少 GITEE_TOKEN，跳过 Gitee 镜像。');
-  console.error('  生成方式：Gitee → 设置 → 私人令牌 → 勾选 projects，然后 export GITEE_TOKEN=xxx');
+  console.error('[gitee-release] 没找到 Gitee 令牌，停止。按顺序找过这四处：');
+  console.error('  1. 环境变量 GITEE_TOKEN');
+  console.error('  2. 环境变量 GITEE_TOKEN_FILE 指向的文件');
+  console.error(`  3. macOS 钥匙串（service ${KEYCHAIN_SERVICE}）`);
+  console.error(`  4. ${TOKEN_FILE}`);
+  console.error('  存一次即可，之后不用再 export（docs/09 §3.3）：');
+  console.error(`    security add-generic-password -s ${KEYCHAIN_SERVICE} -a "$USER" -w "你的令牌" -U`);
   process.exit(2);
 }
+log(`令牌来源：${tokenSource}`);
 
 /** Gitee OpenAPI 统一入口：token 走 query，避免 multipart 里塞字段的兼容问题。 */
 async function gitee(path, init = {}) {
