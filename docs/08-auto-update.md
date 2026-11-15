@@ -79,8 +79,8 @@
 
 ### 2.3 签名（不可关闭）
 
-- 本地生成一次密钥对，公钥写进 `tauri.conf.json`，私钥只存在于 GitHub Secrets 与离线备份。
-- **私钥丢失 = 已安装用户永远无法再收到更新**（只能让用户手动重装）。必须离线备份。
+- 本地生成一次密钥对：公钥写进 `tauri.conf.json`；私钥不进仓库、不进构建产物，仅在签名环节注入。
+- **私钥不可重建、不可轮换**：丢失后已安装用户将永远无法再收到更新（只能手动重装），须自行妥善保管。
 - 签名校验失败时插件直接报错，我们的 UI 提示「安装包校验失败，已取消更新」。
 
 ---
@@ -161,17 +161,16 @@ pnpm add @tauri-apps/plugin-updater @tauri-apps/plugin-process
 
 ### 4.4 签名密钥（一次性，人工执行）
 
+私钥路径由执行者自行决定，不要写进仓库或文档；下面的变量只是示例：
+
 ```bash
-pnpm tauri signer generate -w ~/.tauri/tree-todo.key
-# 公钥 → 粘贴进 tauri.conf.json 的 plugins.updater.pubkey（已写入）
-# 私钥 → GitHub Secrets：
-#   TAURI_SIGNING_PRIVATE_KEY = 私钥文件内容（整个 ~/.tauri/tree-todo.key）
-# 本项目密钥未设口令，TAURI_SIGNING_PRIVATE_KEY_PASSWORD 留空即可；
-# 若后续更换为带口令的密钥，再补这个 secret。
+pnpm tauri signer generate -w "$SIGNING_KEY_PATH"
+# 公钥 → 粘贴进 tauri.conf.json 的 plugins.updater.pubkey
+# 私钥 → 在签名环节通过 TAURI_SIGNING_PRIVATE_KEY 注入；
+#        若生成时设置了口令，另配 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-当前密钥已于 2026-11-03 生成在本机 `~/.tauri/tree-todo.key`（权限 600，不在仓库内）。
-**必须离线备份**：私钥丢失后，已安装用户将无法再收到任何更新。
+> 私钥不可重建、不可轮换：一旦丢失，已安装用户将无法再收到更新。请按自己的密钥管理流程妥善保管，不要放进仓库、构建产物或任何会被分发的目录。
 
 ---
 
@@ -479,7 +478,7 @@ publish-manifest:
 
 ## 9. 安全
 
-- **强制验签**：公钥内嵌在安装包里，私钥只存 CI Secrets + 离线备份；`latest.json` 被篡改也无法通过校验。
+- **强制验签**：公钥内嵌在安装包里，私钥不进仓库与产物、仅在签名环节注入；`latest.json` 被篡改也无法通过校验。
 - **仅 HTTPS**：不使用 `dangerousInsecureTransportProtocol`（本地测试配置单独放在测试用 config 里，不进正式包）。
 - **不降级**：默认只接受更高 semver，避免被诱导回滚到有漏洞的版本。
 - **最小权限**：capabilities 只加 `updater:default` 与 `process:allow-restart`。
@@ -491,7 +490,7 @@ publish-manifest:
 
 ### 10.1 本地端到端（不污染线上 Release）
 
-1. 生成测试密钥对，公钥写进一份测试配置 `src-tauri/tauri.updater-test.conf.json`：
+1. 生成**独立于正式签名密钥**的测试密钥对，公钥写进一份测试配置 `src-tauri/tauri.updater-test.conf.json`：
    ```json
    {
      "plugins": { "updater": {
@@ -502,7 +501,7 @@ publish-manifest:
    ```
    构建时用 `--config` 合并（仅本机测试，绝不用于发版）：
    ```bash
-   export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/tree-todo.key)"
+   export TAURI_SIGNING_PRIVATE_KEY="$(cat "$TEST_SIGNING_KEY_PATH")"
    pnpm tauri build --config src-tauri/tauri.updater-test.conf.json
    ```
 2. 构建「旧版」2.0.0（带 updater + 测试配置）并安装。
